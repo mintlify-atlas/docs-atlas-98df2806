@@ -1,0 +1,203 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "BashKit",
+  "projectDescription": "Virtual bash interpreter with sandboxed execution and virtual filesystem for multi-tenant environments",
+  "theme": "aspen",
+  "primaryColor": "#2ECC71",
+  "lightColor": "#58D68D",
+  "darkColor": "#229954",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/virtual-filesystem",
+              "concepts/execution-model",
+              "concepts/resource-limits"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/configuration",
+              "guides/custom-builtins",
+              "guides/network-access",
+              "guides/error-handling"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/git-support",
+              "features/python-support",
+              "features/scripted-tools"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Python SDK",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "python/installation",
+              "python/quickstart"
+            ]
+          },
+          {
+            "group": "Usage",
+            "pages": [
+              "python/basic-usage",
+              "python/configuration",
+              "python/scripted-tools"
+            ]
+          },
+          {
+            "group": "Framework Integrations",
+            "pages": [
+              "python/langchain",
+              "python/pydantic-ai"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "pages": [
+              "python/api/bash",
+              "python/api/bash-tool",
+              "python/api/scripted-tool",
+              "python/api/exec-result"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI",
+        "groups": [
+          {
+            "group": "Command Line",
+            "pages": [
+              "cli/installation",
+              "cli/usage",
+              "cli/mcp-server"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Types",
+            "pages": [
+              "api/bash",
+              "api/bash-builder",
+              "api/exec-result",
+              "api/execution-limits"
+            ]
+          },
+          {
+            "group": "Tool Integration",
+            "pages": [
+              "api/tool-trait",
+              "api/bash-tool",
+              "api/tool-request",
+              "api/tool-response"
+            ]
+          },
+          {
+            "group": "Filesystem",
+            "pages": [
+              "api/filesystem",
+              "api/in-memory-fs",
+              "api/overlay-fs",
+              "api/mountable-fs"
+            ]
+          },
+          {
+            "group": "Network",
+            "pages": [
+              "api/network-allowlist"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Resources",
+        "groups": [
+          {
+            "group": "Reference",
+            "pages": [
+              "resources/builtin-commands",
+              "resources/shell-syntax",
+              "resources/posix-compliance",
+              "resources/compatibility"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "resources/security-model",
+              "resources/threat-model"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "resources/contributing",
+              "resources/changelog"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "POSIX-compliant shell interpreter",
+    "Sandboxed in-process execution",
+    "Virtual filesystem (InMemoryFs, OverlayFs, MountableFs)",
+    "Resource limits (commands, loops, function depth)",
+    "100+ built-in commands",
+    "Network allowlist for HTTP access",
+    "Async-first with tokio",
+    "Custom builtin support",
+    "Experimental Git support (virtual operations)",
+    "Experimental Python support (embedded interpreter)",
+    "Tool trait for LLM integration",
+    "Python bindings with LangChain/PydanticAI support",
+    "CLI with MCP server mode",
+    "Scripted tool orchestration"
+  ],
+  "publicApiSurface": [
+    "Bash",
+    "BashBuilder",
+    "ExecResult",
+    "ExecutionLimits",
+    "Tool (trait)",
+    "BashTool",
+    "ToolRequest",
+    "ToolResponse",
+    "FileSystem (trait)",
+    "InMemoryFs",
+    "OverlayFs",
+    "MountableFs",
+    "NetworkAllowlist",
+    "Builtin (trait)",
+    "GitConfig",
+    "ScriptedTool (Python)",
+    "create_bash_tool (LangChain)",
+    "create_bash_tool (PydanticAI)"
+  ]
+}
