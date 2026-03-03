@@ -1,0 +1,471 @@
+---
+title: ScriptedTool
+description: Multi-tool orchestration API reference
+---
+
+`ScriptedTool` composes multiple Python callbacks into a single bash-scriptable interface. Each registered tool becomes a bash builtin command. An LLM writes one bash script that pipes, loops, and branches across all tools.
+
+## Constructor
+
+```python
+from bashkit import ScriptedTool
+
+tool = ScriptedTool(
+    name,
+    short_description=None,
+    max_commands=None,
+    max_loop_iterations=None
+)
+```
+
+### Parameters
+
+<ParamField path="name" type="str" required>
+  Tool name used in system prompts and documentation.
+</ParamField>
+
+<ParamField path="short_description" type="str" optional>
+  One-line description of the tool's purpose.
+  
+  **Default:** `f"ScriptedTool: {name}"`
+</ParamField>
+
+<ParamField path="max_commands" type="int" optional>
+  Maximum number of commands per execute call.
+  
+  **Default:** unlimited
+</ParamField>
+
+<ParamField path="max_loop_iterations" type="int" optional>
+  Maximum loop iterations per execute call.
+  
+  **Default:** unlimited
+</ParamField>
+
+## Methods
+
+### add_tool()
+
+Register a tool command.
+
+```python
+tool.add_tool(name, description, callback, schema=None)
+```
+
+<ParamField path="name" type="str" required>
+  Command name (becomes a bash builtin).
+</ParamField>
+
+<ParamField path="description" type="str" required>
+  Human-readable description of what the tool does.
+</ParamField>
+
+<ParamField path="callback" type="callable" required>
+  Python function with signature `(params: dict, stdin: str | None) -> str`.
+  
+  - `params` contains `--key value` flags from command line
+  - `stdin` contains piped input (None if no pipe)
+  - Return string becomes stdout
+  - Raise exception to signal failure
+</ParamField>
+
+<ParamField path="schema" type="dict" optional>
+  JSON Schema dict describing input parameters. Used for validation and type coercion.
+</ParamField>
+
+#### Example
+
+```python
+import json
+
+def get_user(params, stdin=None):
+    user_id = params.get('id', 1)
+    return json.dumps({"id": user_id, "name": f"User{user_id}"})
+
+tool = ScriptedTool("api")
+tool.add_tool(
+    "get_user",
+    "Fetch user by ID",
+    callback=get_user,
+    schema={
+        "type": "object",
+        "properties": {
+            "id": {"type": "integer", "description": "User ID"}
+        },
+        "required": ["id"]
+    }
+)
+```
+
+### env()
+
+Set an environment variable visible inside scripts.
+
+```python
+tool.env(key, value)
+```
+
+<ParamField path="key" type="str" required>
+  Environment variable name.
+</ParamField>
+
+<ParamField path="value" type="str" required>
+  Environment variable value.
+</ParamField>
+
+#### Example
+
+```python
+tool = ScriptedTool("api")
+tool.env("API_KEY", "secret-123")
+tool.env("BASE_URL", "https://api.example.com")
+
+result = tool.execute_sync("echo $API_KEY")
+print(result.stdout)  # secret-123
+```
+
+### execute()
+
+Execute a bash script asynchronously.
+
+```python
+result = await tool.execute(commands)
+```
+
+<ParamField path="commands" type="str" required>
+  Bash script to execute.
+</ParamField>
+
+<ResponseField name="result" type="ExecResult">
+  Execution result containing stdout, stderr, exit_code, and error fields.
+</ResponseField>
+
+#### Example
+
+```python
+import asyncio
+
+async def main():
+    tool = ScriptedTool("api")
+    tool.add_tool("greet", "Greet user", callback=lambda p, s: f"hello {p['name']}")
+    
+    result = await tool.execute("greet --name Alice")
+    print(result.stdout)  # hello Alice
+
+asyncio.run(main())
+```
+
+### execute_sync()
+
+Execute a bash script synchronously.
+
+```python
+result = tool.execute_sync(commands)
+```
+
+<ParamField path="commands" type="str" required>
+  Bash script to execute.
+</ParamField>
+
+<ResponseField name="result" type="ExecResult">
+  Execution result.
+</ResponseField>
+
+#### Example
+
+```python
+tool = ScriptedTool("api")
+tool.add_tool("greet", "Greet user", callback=lambda p, s: f"hello {p['name']}")
+
+result = tool.execute_sync("greet --name Bob")
+print(result.stdout)  # hello Bob
+```
+
+## LLM Tool Metadata
+
+### name
+
+Get the tool name.
+
+```python
+print(tool.name)  # "api"
+```
+
+<ResponseField name="name" type="str">
+  Tool name from constructor.
+</ResponseField>
+
+### short_description
+
+Get the short description.
+
+```python
+print(tool.short_description)  # "API orchestrator"
+```
+
+<ResponseField name="short_description" type="str">
+  One-line description.
+</ResponseField>
+
+### tool_count()
+
+Get the number of registered tools.
+
+```python
+count = tool.tool_count()
+```
+
+<ResponseField name="count" type="int">
+  Number of tools registered via `add_tool()`.
+</ResponseField>
+
+### description()
+
+Get full description.
+
+```python
+desc = tool.description()
+```
+
+<ResponseField name="description" type="str">
+  Multi-line description including all registered tools.
+</ResponseField>
+
+### help()
+
+Get detailed documentation in man-page format.
+
+```python
+help_text = tool.help()
+```
+
+<ResponseField name="help" type="str">
+  Comprehensive documentation for all commands.
+</ResponseField>
+
+### system_prompt()
+
+Get token-efficient system prompt for LLMs.
+
+```python
+prompt = tool.system_prompt()
+```
+
+<ResponseField name="system_prompt" type="str">
+  Concise prompt listing all available commands and syntax.
+</ResponseField>
+
+### input_schema()
+
+Get JSON Schema for input.
+
+```python
+schema = tool.input_schema()
+```
+
+<ResponseField name="schema" type="str">
+  JSON Schema string (pretty-printed).
+</ResponseField>
+
+### output_schema()
+
+Get JSON Schema for output.
+
+```python
+schema = tool.output_schema()
+```
+
+<ResponseField name="schema" type="str">
+  JSON Schema string describing ExecResult format.
+</ResponseField>
+
+### version
+
+Get tool version.
+
+```python
+print(tool.version)  # "0.1.2"
+```
+
+<ResponseField name="version" type="str">
+  Semantic version string.
+</ResponseField>
+
+## Examples
+
+### Simple API Tool
+
+```python
+from bashkit import ScriptedTool
+import json
+
+def get_user(params, stdin=None):
+    return json.dumps({"id": 1, "name": "Alice"})
+
+def get_posts(params, stdin=None):
+    return json.dumps({"items": [{"title": "Post 1"}, {"title": "Post 2"}]})
+
+tool = ScriptedTool("api", short_description="User API")
+tool.add_tool("get_user", "Fetch user", callback=get_user)
+tool.add_tool("get_posts", "Fetch posts", callback=get_posts)
+
+# Orchestrate multiple calls
+result = tool.execute_sync("""
+    user=$(get_user)
+    posts=$(get_posts)
+    
+    echo "User: $(echo $user | jq -r '.name')"
+    echo "Posts: $(echo $posts | jq '.items | length')"
+""")
+
+print(result.stdout)
+# User: Alice
+# Posts: 2
+```
+
+### Tool with Stdin
+
+```python
+def transform(params, stdin=None):
+    if stdin is None:
+        raise ValueError("Requires piped input")
+    return stdin.upper()
+
+tool = ScriptedTool("text")
+tool.add_tool("upper", "Convert to uppercase", callback=transform)
+
+result = tool.execute_sync("echo 'hello world' | upper")
+print(result.stdout)  # HELLO WORLD
+```
+
+### Complex Kubernetes Example
+
+```python
+from bashkit import ScriptedTool
+import json
+
+def get_pods(params, stdin=None):
+    namespace = params.get('namespace', 'default')
+    pods = [
+        {"name": "web-abc", "status": "Running"},
+        {"name": "worker-def", "status": "CrashLoopBackOff"}
+    ]
+    return json.dumps({"items": pods})
+
+def get_logs(params, stdin=None):
+    pod = params['name']
+    return f"[ERROR] Connection failed\n[ERROR] Retrying...\n"
+
+tool = ScriptedTool("kubectl")
+tool.add_tool(
+    "get_pods",
+    "List pods",
+    callback=get_pods,
+    schema={
+        "type": "object",
+        "properties": {"namespace": {"type": "string"}}
+    }
+)
+tool.add_tool(
+    "get_logs",
+    "Get pod logs",
+    callback=get_logs,
+    schema={
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"]
+    }
+)
+
+# Diagnose unhealthy pods
+result = tool.execute_sync("""
+    # Find unhealthy pods
+    unhealthy=$(get_pods | jq -r '.items[] | select(.status != "Running") | .name')
+    
+    # Get logs
+    for pod in $unhealthy; do
+        echo "=== $pod ==="
+        get_logs --name "$pod" | grep ERROR
+    done
+""")
+
+print(result.stdout)
+```
+
+### With LangChain
+
+```python
+from bashkit import ScriptedTool
+from bashkit.langchain import create_scripted_tool
+from langchain_anthropic import ChatAnthropic
+from langgraph.prebuilt import create_react_agent
+
+# Build ScriptedTool
+st = ScriptedTool("api")
+st.add_tool("get_data", "Fetch data", callback=my_callback)
+
+# Wrap for LangChain
+lc_tool = create_scripted_tool(st)
+
+# Create agent
+model = ChatAnthropic(model="claude-sonnet-4-20250514")
+agent = create_react_agent(model, [lc_tool])
+
+result = agent.invoke({
+    "messages": [{"role": "user", "content": "Fetch and analyze the data"}]
+})
+```
+
+## Best Practices
+
+### Return JSON for Structured Data
+
+```python
+import json
+
+def get_user(params, stdin=None):
+    data = {"id": 1, "name": "Alice"}
+    return json.dumps(data)  # Easy to pipe to jq
+```
+
+### Provide Schemas
+
+```python
+tool.add_tool(
+    "fetch",
+    "Fetch resource",
+    callback=fetch,
+    schema={
+        "type": "object",
+        "properties": {
+            "id": {"type": "integer", "description": "Resource ID"}
+        },
+        "required": ["id"]
+    }
+)
+```
+
+### Handle Stdin Gracefully
+
+```python
+def process(params, stdin=None):
+    if stdin is None:
+        raise ValueError("This tool requires piped input")
+    return stdin.upper()
+```
+
+### Set Resource Limits
+
+```python
+tool = ScriptedTool(
+    "api",
+    max_commands=500,
+    max_loop_iterations=5000
+)
+```
+
+## See Also
+
+- [ScriptedTool Guide](/python/scripted-tools) - Detailed usage guide
+- [ExecResult](/python/api/exec-result) - Execution result object
+- [LangChain Integration](/python/langchain) - Using with LangChain

@@ -1,0 +1,339 @@
+---
+title: PydanticAI Integration
+description: Use BashKit with PydanticAI agents
+---
+
+BashKit provides native integration with PydanticAI for building type-safe AI agents with bash execution capabilities.
+
+## Installation
+
+Install BashKit with PydanticAI support:
+
+```bash
+pip install 'bashkit[pydantic-ai]'
+```
+
+## Basic Usage
+
+Create a PydanticAI tool with bash execution:
+
+```python
+from bashkit.pydantic_ai import create_bash_tool
+from pydantic_ai import Agent
+
+# Create bash tool
+bash_tool = create_bash_tool()
+
+# Create agent with the tool
+agent = Agent(
+    'anthropic:claude-sonnet-4-20250514',
+    tools=[bash_tool]
+)
+
+# Run agent
+result = agent.run_sync("List all .txt files and count them")
+print(result.data)
+```
+
+## With Configuration
+
+Customize the bash environment:
+
+```python
+from bashkit.pydantic_ai import create_bash_tool
+from pydantic_ai import Agent
+
+bash_tool = create_bash_tool(
+    username="ai-agent",
+    hostname="pydantic-sandbox",
+    max_commands=1000,
+    max_loop_iterations=10000
+)
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-20250514',
+    tools=[bash_tool]
+)
+```
+
+## Async Usage
+
+```python
+import asyncio
+from bashkit.pydantic_ai import create_bash_tool
+from pydantic_ai import Agent
+
+async def main():
+    bash_tool = create_bash_tool()
+    
+    agent = Agent(
+        'anthropic:claude-sonnet-4-20250514',
+        tools=[bash_tool]
+    )
+    
+    result = await agent.run("Create a JSON file with user data")
+    print(result.data)
+
+asyncio.run(main())
+```
+
+## Tool Function
+
+The created tool is an async function that accepts commands:
+
+```python
+from bashkit.pydantic_ai import create_bash_tool
+
+bash_tool = create_bash_tool()
+
+# Tool signature:
+# async def bash(commands: str) -> str:
+#     """Execute bash commands in a sandboxed virtual environment."""
+
+import asyncio
+
+result = asyncio.run(bash_tool.function("echo 'Hello from bash'"))
+print(result)  # Hello from bash
+```
+
+## Output Format
+
+The tool returns formatted output:
+
+```python
+import asyncio
+from bashkit.pydantic_ai import create_bash_tool
+
+bash_tool = create_bash_tool()
+
+# Successful execution
+result = asyncio.run(bash_tool.function("echo 'output'"))
+# Returns: "output"
+
+# With stderr
+result = asyncio.run(bash_tool.function("echo 'warn' >&2; echo 'ok'"))
+# Returns: "ok\nSTDERR: warn"
+
+# Non-zero exit
+result = asyncio.run(bash_tool.function("echo 'done'; exit 42"))
+# Returns: "done\n[Exit code: 42]"
+
+# No output
+result = asyncio.run(bash_tool.function("true"))
+# Returns: "[No output]"
+```
+
+## Complete Example
+
+```python
+import os
+import asyncio
+from pydantic_ai import Agent
+from bashkit.pydantic_ai import create_bash_tool
+
+# Set API key
+os.environ["ANTHROPIC_API_KEY"] = "your-key-here"
+
+async def main():
+    # Create bash tool with resource limits
+    bash_tool = create_bash_tool(
+        max_commands=500,
+        max_loop_iterations=5000
+    )
+    
+    # Create agent
+    agent = Agent(
+        'anthropic:claude-sonnet-4-20250514',
+        tools=[bash_tool],
+        system_prompt="You are a helpful assistant with bash execution capabilities."
+    )
+    
+    # Run task
+    result = await agent.run(
+        "Create a JSON file with a list of programming languages, "
+        "then use jq to count how many languages start with 'P'"
+    )
+    
+    print(result.data)
+
+asyncio.run(main())
+```
+
+## With Structured Output
+
+Combine bash execution with Pydantic models:
+
+```python
+import asyncio
+from pydantic import BaseModel
+from pydantic_ai import Agent
+from bashkit.pydantic_ai import create_bash_tool
+
+class FileStats(BaseModel):
+    total_files: int
+    total_lines: int
+    largest_file: str
+
+async def main():
+    bash_tool = create_bash_tool()
+    
+    agent = Agent(
+        'anthropic:claude-sonnet-4-20250514',
+        tools=[bash_tool],
+        result_type=FileStats
+    )
+    
+    result = await agent.run(
+        "Analyze the current directory: count files, total lines, and find the largest file"
+    )
+    
+    stats: FileStats = result.data
+    print(f"Files: {stats.total_files}")
+    print(f"Lines: {stats.total_lines}")
+    print(f"Largest: {stats.largest_file}")
+
+asyncio.run(main())
+```
+
+## Error Handling
+
+The tool handles execution errors gracefully:
+
+```python
+import asyncio
+from pydantic_ai import Agent
+from bashkit.pydantic_ai import create_bash_tool
+
+async def main():
+    bash_tool = create_bash_tool()
+    
+    agent = Agent(
+        'anthropic:claude-sonnet-4-20250514',
+        tools=[bash_tool]
+    )
+    
+    # Agent will receive error information and can retry
+    result = await agent.run("Try to execute an invalid command")
+    print(result.data)
+
+asyncio.run(main())
+```
+
+## Resource Limits
+
+Always configure resource limits for LLM-generated code:
+
+```python
+from bashkit.pydantic_ai import create_bash_tool
+
+bash_tool = create_bash_tool(
+    max_commands=1000,        # Limit total commands
+    max_loop_iterations=10000  # Prevent infinite loops
+)
+```
+
+## Multiple Agents
+
+You can create multiple agents with different bash configurations:
+
+```python
+import asyncio
+from pydantic_ai import Agent
+from bashkit.pydantic_ai import create_bash_tool
+
+async def main():
+    # Restrictive agent
+    safe_bash = create_bash_tool(
+        max_commands=100,
+        max_loop_iterations=1000
+    )
+    safe_agent = Agent(
+        'anthropic:claude-sonnet-4-20250514',
+        tools=[safe_bash],
+        system_prompt="You are a restricted agent with limited execution."
+    )
+    
+    # Permissive agent
+    power_bash = create_bash_tool(
+        max_commands=10000,
+        max_loop_iterations=100000
+    )
+    power_agent = Agent(
+        'anthropic:claude-sonnet-4-20250514',
+        tools=[power_bash],
+        system_prompt="You are a powerful agent for complex tasks."
+    )
+    
+    # Use different agents for different tasks
+    simple_result = await safe_agent.run("Echo hello")
+    complex_result = await power_agent.run("Process large dataset")
+
+asyncio.run(main())
+```
+
+## Best Practices
+
+### Always Set Resource Limits
+
+Protect against runaway LLM-generated code:
+
+```python
+bash_tool = create_bash_tool(
+    max_commands=1000,
+    max_loop_iterations=10000
+)
+```
+
+### Use Descriptive Configuration
+
+Make logs and debugging easier:
+
+```python
+bash_tool = create_bash_tool(
+    username="pydantic-agent",
+    hostname="sandbox"
+)
+```
+
+### Combine with Structured Output
+
+Use Pydantic models for type-safe results:
+
+```python
+from pydantic import BaseModel
+
+class Result(BaseModel):
+    success: bool
+    message: str
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-20250514',
+    tools=[bash_tool],
+    result_type=Result
+)
+```
+
+### Provide Clear System Prompts
+
+Guide the agent on how to use bash:
+
+```python
+agent = Agent(
+    'anthropic:claude-sonnet-4-20250514',
+    tools=[bash_tool],
+    system_prompt="""
+        You are an AI assistant with bash execution capabilities.
+        Use bash for file operations, data processing, and system tasks.
+        Always validate command output before making conclusions.
+    """
+)
+```
+
+## Limitations
+
+- The bash environment is sandboxed with a virtual filesystem
+- No network access (unless using tools like `curl` within the sandbox)
+- No access to the host filesystem
+- Resource limits apply to prevent infinite loops and excessive execution
+
+See the [Configuration](/python/configuration) page for more details on limits and capabilities.

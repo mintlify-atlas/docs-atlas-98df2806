@@ -1,0 +1,317 @@
+---
+title: LangChain Integration
+description: Use BashKit with LangChain agents
+---
+
+BashKit provides seamless integration with LangChain for building AI agents with bash execution capabilities.
+
+## Installation
+
+Install BashKit with LangChain support:
+
+```bash
+pip install 'bashkit[langchain]'
+```
+
+## BashTool Integration
+
+### Basic Usage
+
+Create a LangChain-compatible bash tool:
+
+```python
+from bashkit.langchain import create_bash_tool
+
+tool = create_bash_tool()
+
+# Use with LangChain
+result = tool.invoke({"commands": "echo 'Hello, LangChain!'"})
+print(result)  # Hello, LangChain!
+```
+
+### With Configuration
+
+Customize the bash environment:
+
+```python
+from bashkit.langchain import create_bash_tool
+
+tool = create_bash_tool(
+    username="agent",
+    hostname="llm-sandbox",
+    max_commands=1000,
+    max_loop_iterations=10000
+)
+
+result = tool.invoke({"commands": "whoami"})
+print(result)  # agent
+```
+
+### With LangGraph ReAct Agent
+
+```python
+from langchain_anthropic import ChatAnthropic
+from langgraph.prebuilt import create_react_agent
+from bashkit.langchain import create_bash_tool
+
+# Create bash tool
+bash_tool = create_bash_tool()
+
+# Create agent
+model = ChatAnthropic(model="claude-sonnet-4-20250514")
+agent = create_react_agent(model, [bash_tool])
+
+# Run agent
+result = agent.invoke({
+    "messages": [{
+        "role": "user",
+        "content": "List all .txt files and count them"
+    }]
+})
+
+for msg in result["messages"]:
+    if msg.type == "ai" and msg.content:
+        print(msg.content)
+```
+
+### Async Usage
+
+```python
+import asyncio
+from bashkit.langchain import create_bash_tool
+
+async def main():
+    tool = create_bash_tool()
+    result = await tool.ainvoke({"commands": "echo 'async execution'"})
+    print(result)
+
+asyncio.run(main())
+```
+
+## ScriptedTool Integration
+
+Wrap a configured ScriptedTool as a LangChain tool:
+
+### Basic Example
+
+```python
+from bashkit import ScriptedTool
+from bashkit.langchain import create_scripted_tool
+
+# Create and configure ScriptedTool
+st = ScriptedTool("api")
+st.add_tool(
+    "greet",
+    "Greet a user",
+    callback=lambda p, s=None: f"hello {p.get('name', 'world')}\n"
+)
+
+# Wrap for LangChain
+lc_tool = create_scripted_tool(st)
+
+# Use with agent
+result = lc_tool.invoke({"commands": "greet --name Alice"})
+print(result)  # hello Alice
+```
+
+### Multi-Tool Orchestration
+
+```python
+from bashkit import ScriptedTool
+from bashkit.langchain import create_scripted_tool
+from langchain_anthropic import ChatAnthropic
+from langgraph.prebuilt import create_react_agent
+import json
+
+# Define tool callbacks
+def get_user(params, stdin=None):
+    return json.dumps({"id": 1, "name": "Alice", "role": "admin"})
+
+def get_posts(params, stdin=None):
+    return json.dumps({"items": [
+        {"title": "Post 1", "views": 100},
+        {"title": "Post 2", "views": 200}
+    ]})
+
+# Build ScriptedTool
+st = ScriptedTool("api", short_description="User API")
+st.add_tool("get_user", "Fetch user", callback=get_user)
+st.add_tool("get_posts", "Fetch posts", callback=get_posts)
+
+# Wrap for LangChain
+lc_tool = create_scripted_tool(st)
+
+# Create agent
+model = ChatAnthropic(model="claude-sonnet-4-20250514")
+agent = create_react_agent(model, [lc_tool])
+
+# Agent can orchestrate multiple API calls in one bash script
+result = agent.invoke({
+    "messages": [{
+        "role": "user",
+        "content": "Get the user's name and total post views"
+    }]
+})
+```
+
+## Tool Classes
+
+You can also use the LangChain tool classes directly:
+
+### BashkitTool Class
+
+```python
+from bashkit.langchain import BashkitTool
+
+tool = BashkitTool(
+    username="agent",
+    hostname="sandbox",
+    max_commands=1000
+)
+
+# Synchronous
+result = tool._run("echo 'Hello!'")
+
+# Asynchronous
+import asyncio
+result = asyncio.run(tool._arun("echo 'Hello!'"))
+```
+
+### ScriptedToolLangChain Class
+
+```python
+from bashkit import ScriptedTool
+from bashkit.langchain import ScriptedToolLangChain
+
+st = ScriptedTool("api")
+st.add_tool("greet", "Greet user", callback=lambda p, s=None: f"hello {p['name']}")
+
+lc_tool = ScriptedToolLangChain(st)
+result = lc_tool._run("greet --name Bob")
+```
+
+## Error Handling
+
+The LangChain integration automatically handles errors:
+
+```python
+from bashkit.langchain import create_bash_tool
+from langchain_core.tools import ToolException
+
+tool = create_bash_tool()
+
+try:
+    # This will raise ToolException
+    result = tool.invoke({"commands": "exit 1"})
+except ToolException as e:
+    print(f"Tool error: {e}")
+```
+
+## Output Format
+
+The LangChain integration formats output for clarity:
+
+```python
+tool = create_bash_tool()
+
+# Successful execution
+result = tool.invoke({"commands": "echo 'output'"})
+# Returns: "output"
+
+# With stderr
+result = tool.invoke({"commands": "echo 'warn' >&2; echo 'ok'"})
+# Returns: "ok\nSTDERR: warn"
+
+# Non-zero exit
+result = tool.invoke({"commands": "echo 'done'; exit 42"})
+# Returns: "done\n[Exit code: 42]"
+```
+
+## Complete Example
+
+Here's a full example with a LangGraph agent:
+
+```python
+import os
+from langchain_anthropic import ChatAnthropic
+from langgraph.prebuilt import create_react_agent
+from bashkit.langchain import create_bash_tool
+
+# Set up API key
+os.environ["ANTHROPIC_API_KEY"] = "your-key-here"
+
+# Create bash tool with limits
+bash_tool = create_bash_tool(
+    max_commands=500,
+    max_loop_iterations=5000
+)
+
+# Create LLM
+model = ChatAnthropic(
+    model="claude-sonnet-4-20250514",
+    temperature=0
+)
+
+# Create ReAct agent
+agent = create_react_agent(model, [bash_tool])
+
+# Run agent task
+result = agent.invoke({
+    "messages": [{
+        "role": "user",
+        "content": "Create a JSON file with a list of fruits, then count how many fruits start with 'a'"
+    }]
+})
+
+# Print final response
+for msg in result["messages"]:
+    if msg.type == "ai" and msg.content:
+        print(msg.content)
+```
+
+## Best Practices
+
+### Always Set Resource Limits
+
+```python
+tool = create_bash_tool(
+    max_commands=1000,
+    max_loop_iterations=10000
+)
+```
+
+### Use Descriptive Configuration
+
+```python
+tool = create_bash_tool(
+    username="langchain-agent",
+    hostname="sandbox"
+)
+```
+
+### Handle Tool Errors
+
+```python
+from langchain_core.tools import ToolException
+
+try:
+    result = tool.invoke({"commands": commands})
+except ToolException as e:
+    print(f"Execution failed: {e}")
+```
+
+### Prefer ScriptedTool for Multi-Step Tasks
+
+Instead of giving the agent many simple tools, compose them into a ScriptedTool:
+
+```python
+# Instead of: [get_user_tool, get_posts_tool, get_comments_tool]
+# Use:
+st = ScriptedTool("api")
+st.add_tool("get_user", "Fetch user", callback=get_user)
+st.add_tool("get_posts", "Fetch posts", callback=get_posts)
+st.add_tool("get_comments", "Fetch comments", callback=get_comments)
+
+lc_tool = create_scripted_tool(st)
+agent = create_react_agent(model, [lc_tool])
+```

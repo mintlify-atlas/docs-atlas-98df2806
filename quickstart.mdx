@@ -1,80 +1,204 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get up and running with BashKit in under 5 minutes
 ---
 
-## Get started in three steps
+Get started with BashKit by running your first virtual bash script in Rust.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+- Rust 1.70 or later
+- Basic familiarity with Rust async/await
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+## Installation
 
-### Step 2: Deploy your changes
+<Steps>
+  <Step title="Add BashKit to your project">
+    Add BashKit as a dependency to your Rust project:
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    <CodeGroup>
+    ```bash cargo add
+    cargo add bashkit
+    cargo add tokio --features full
+    cargo add anyhow
+    ```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    ```toml Cargo.toml
+    [dependencies]
+    bashkit = "0.1"
+    tokio = { version = "1", features = ["full"] }
+    anyhow = "1"
+    ```
+    </CodeGroup>
+  </Step>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+  <Step title="Create your first script">
+    Create a simple program that executes bash commands:
 
-### Step 3: Go live
+    ```rust src/main.rs
+    use bashkit::Bash;
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    #[tokio::main]
+    async fn main() -> anyhow::Result<()> {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo hello world").await?;
+        println!("{}", result.stdout); // "hello world\n"
+        Ok(())
+    }
+    ```
+  </Step>
 
-## Next steps
+  <Step title="Run it">
+    ```bash
+    cargo run
+    ```
 
-Now that you have your docs running, explore these key features:
+    Output:
+    ```
+    hello world
+    ```
+  </Step>
 
-<CardGroup cols={2}>
+  <Step title="Try more commands">
+    Bash scripts run in a virtual environment with a virtual filesystem:
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+    ```rust
+    use bashkit::Bash;
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+    #[tokio::main]
+    async fn main() -> anyhow::Result<()> {
+        let mut bash = Bash::new();
+        
+        // Variables
+        bash.exec("NAME=World").await?;
+        let result = bash.exec("echo Hello, $NAME!").await?;
+        println!("{}", result.stdout); // "Hello, World!\n"
+        
+        // Pipelines
+        let result = bash.exec("echo -e 'apple\\nbanana\\ncherry' | grep a").await?;
+        println!("{}", result.stdout); // "apple\nbanana\n"
+        
+        // Files (virtual filesystem)
+        bash.exec("echo 'some data' > /tmp/file.txt").await?;
+        let result = bash.exec("cat /tmp/file.txt").await?;
+        println!("{}", result.stdout); // "some data\n"
+        
+        // Control flow
+        bash.exec(r#"
+            for i in 1 2 3; do
+                echo "Number: $i"
+            done
+        "#).await?;
+        
+        Ok(())
+    }
+    ```
+  </Step>
+</Steps>
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+## Virtual Filesystem
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+All file operations happen in a virtual filesystem that exists only in memory:
 
-</CardGroup>
+```rust
+let mut bash = Bash::new();
+
+// Create a file in the virtual filesystem
+bash.exec("mkdir -p /app/data").await?;
+bash.exec("echo 'config' > /app/data/config.txt").await?;
+
+// Read it back
+let result = bash.exec("cat /app/data/config.txt").await?;
+assert_eq!(result.stdout, "config\n");
+
+// Files don't exist on your real filesystem!
+```
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+The virtual filesystem is isolated from your host system. Scripts cannot access your real files unless you explicitly mount them.
 </Note>
+
+## Common Operations
+
+### Text Processing
+
+```rust
+// grep
+let result = bash.exec("echo -e 'line1\\nline2\\nline3' | grep 2").await?;
+
+// sed
+let result = bash.exec("echo 'hello' | sed 's/hello/goodbye/'").await?;
+
+// awk
+let result = bash.exec("echo -e '1 2\\n3 4' | awk '{print $2}'").await?;
+
+// jq
+bash.exec("echo '{\"name\":\"Alice\",\"age\":30}' > data.json").await?;
+let result = bash.exec("jq .name data.json").await?;
+```
+
+### Command Substitution
+
+```rust
+let result = bash.exec(r#"
+    COUNT=$(echo -e "a\nb\nc" | wc -l)
+    echo "Lines: $COUNT"
+"#).await?;
+println!("{}", result.stdout); // "Lines: 3\n"
+```
+
+### Error Handling
+
+```rust
+let result = bash.exec("cat /nonexistent").await?;
+
+if result.exit_code != 0 {
+    eprintln!("Command failed: {}", result.stderr);
+} else {
+    println!("Success: {}", result.stdout);
+}
+```
+
+## Configuration
+
+Use the builder to configure filesystem, environment, and limits:
+
+```rust
+use bashkit::{Bash, ExecutionLimits, InMemoryFs};
+use std::sync::Arc;
+use std::time::Duration;
+
+let limits = ExecutionLimits::new()
+    .max_commands(1000)
+    .max_loop_iterations(10000)
+    .timeout(Duration::from_secs(30));
+
+let mut bash = Bash::builder()
+    .fs(Arc::new(InMemoryFs::new()))
+    .env("HOME", "/home/user")
+    .env("PATH", "/usr/bin:/bin")
+    .cwd("/home/user")
+    .limits(limits)
+    .build();
+
+bash.exec("echo $HOME").await?; // "/home/user\n"
+```
+
+See the [configuration guide](/guides/configuration) for all options.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Core concepts" icon="book" href="/concepts/architecture">
+    Learn about architecture and design principles
+  </Card>
+  <Card title="Configuration guide" icon="gear" href="/guides/configuration">
+    Configure filesystem, limits, and environment
+  </Card>
+  <Card title="Custom builtins" icon="puzzle-piece" href="/guides/custom-builtins">
+    Extend with domain-specific commands
+  </Card>
+  <Card title="API reference" icon="code" href="/api/bash">
+    Explore the complete API
+  </Card>
+</CardGroup>

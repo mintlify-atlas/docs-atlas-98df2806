@@ -1,0 +1,504 @@
+---
+title: ExecutionLimits
+description: Resource limits for script execution
+---
+
+## Overview
+
+`ExecutionLimits` prevents runaway scripts from consuming excessive resources through configurable limits on commands, loops, recursion, and execution time.
+
+## Structure
+
+```rust
+pub struct ExecutionLimits {
+    pub max_commands: usize,
+    pub max_loop_iterations: usize,
+    pub max_total_loop_iterations: usize,
+    pub max_function_depth: usize,
+    pub timeout: Duration,
+    pub parser_timeout: Duration,
+    pub max_input_bytes: usize,
+    pub max_ast_depth: usize,
+    pub max_parser_operations: usize,
+}
+```
+
+## Default Limits
+
+```rust
+use bashkit::ExecutionLimits;
+
+let limits = ExecutionLimits::default();
+```
+
+| Limit | Default | Purpose |
+|-------|---------|--------|
+| `max_commands` | 10,000 | Prevent command flooding |
+| `max_loop_iterations` | 10,000 | Limit single loop iterations |
+| `max_total_loop_iterations` | 1,000,000 | Prevent nested loop multiplication |
+| `max_function_depth` | 100 | Prevent stack overflow from recursion |
+| `timeout` | 30 seconds | Prevent infinite execution |
+| `parser_timeout` | 5 seconds | Prevent parser hang |
+| `max_input_bytes` | 10,000,000 | Limit script size (10MB) |
+| `max_ast_depth` | 100 | Prevent deeply nested syntax |
+| `max_parser_operations` | 100,000 | Prevent parser CPU exhaustion |
+
+## Creating Limits
+
+### `new()`
+
+Create limits with default values.
+
+```rust
+pub fn new() -> Self
+```
+
+**Example:**
+
+```rust
+use bashkit::ExecutionLimits;
+
+let limits = ExecutionLimits::new();
+```
+
+### Builder Pattern
+
+All setters return `Self` for method chaining:
+
+```rust
+use bashkit::ExecutionLimits;
+use std::time::Duration;
+
+let limits = ExecutionLimits::new()
+    .max_commands(5000)
+    .max_loop_iterations(1000)
+    .timeout(Duration::from_secs(60));
+```
+
+## Command Limits
+
+### `max_commands()`
+
+Set maximum number of commands that can be executed.
+
+```rust
+pub fn max_commands(mut self, count: usize) -> Self
+```
+
+<ParamField path="count" type="usize" required>
+  Maximum command executions allowed
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+
+let mut bash = Bash::builder()
+    .limits(ExecutionLimits::new().max_commands(100))
+    .build();
+
+// This will fail after 100 commands
+let result = bash.exec("for i in {1..200}; do echo $i; done").await;
+assert!(result.is_err());
+```
+
+**Threat Mitigation:**
+- TM-DOS-002: Command flooding
+- TM-DOS-004: CPU exhaustion
+- TM-DOS-019: Resource exhaustion
+
+## Loop Limits
+
+### `max_loop_iterations()`
+
+Set maximum iterations for a single loop.
+
+```rust
+pub fn max_loop_iterations(mut self, count: usize) -> Self
+```
+
+<ParamField path="count" type="usize" required>
+  Maximum iterations per loop
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+
+let mut bash = Bash::builder()
+    .limits(ExecutionLimits::new().max_loop_iterations(1000))
+    .build();
+
+// This fails - exceeds per-loop limit
+let result = bash.exec("for i in {1..2000}; do echo $i; done").await;
+assert!(result.is_err());
+```
+
+**Per-Loop Reset:**
+The counter resets when entering a new loop:
+
+```rust
+// Each loop can iterate up to max_loop_iterations
+// This runs 1000 + 1000 = 2000 total iterations
+bash.exec("
+    for i in {1..1000}; do echo first; done
+    for i in {1..1000}; do echo second; done
+").await?;
+```
+
+**Threat Mitigation:**
+- TM-DOS-016: Infinite loops
+- TM-DOS-017: Loop-based DoS
+
+### `max_total_loop_iterations()`
+
+Set global cap on total loop iterations (nested and sequential).
+
+```rust
+pub fn max_total_loop_iterations(mut self, count: usize) -> Self
+```
+
+<ParamField path="count" type="usize" required>
+  Maximum total iterations across all loops
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+
+let mut bash = Bash::builder()
+    .limits(
+        ExecutionLimits::new()
+            .max_loop_iterations(10_000)  // Per-loop
+            .max_total_loop_iterations(50_000)  // Global cap
+    )
+    .build();
+
+// Nested loops: 1000 * 100 = 100,000 total iterations
+// Fails at global cap of 50,000
+let result = bash.exec("
+    for i in {1..1000}; do
+        for j in {1..100}; do
+            echo $i $j
+        done
+    done
+").await;
+assert!(result.is_err());
+```
+
+**Threat Mitigation:**
+- TM-DOS-018: Nested loop multiplication attack
+
+**How It Works:**
+The total counter never resets during execution, tracking cumulative iterations from all loops (nested, sequential, and repeated).
+
+## Recursion Limits
+
+### `max_function_depth()`
+
+Set maximum function call depth (recursion limit).
+
+```rust
+pub fn max_function_depth(mut self, depth: usize) -> Self
+```
+
+<ParamField path="depth" type="usize" required>
+  Maximum recursion depth
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+
+let mut bash = Bash::builder()
+    .limits(ExecutionLimits::new().max_function_depth(10))
+    .build();
+
+// Recursive factorial exceeds depth limit
+let result = bash.exec("
+    factorial() {
+        if [ $1 -le 1 ]; then
+            echo 1
+        else
+            echo $(( $1 * $(factorial $(( $1 - 1 ))) ))
+        fi
+    }
+    factorial 20
+").await;
+assert!(result.is_err());
+```
+
+**Threat Mitigation:**
+- TM-DOS-020: Stack overflow from deep recursion
+- TM-DOS-021: Function call chain DoS
+
+## Timeout Limits
+
+### `timeout()`
+
+Set execution timeout for the entire script.
+
+```rust
+pub fn timeout(mut self, timeout: Duration) -> Self
+```
+
+<ParamField path="timeout" type="Duration" required>
+  Maximum execution time
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+use std::time::Duration;
+
+let mut bash = Bash::builder()
+    .limits(
+        ExecutionLimits::new()
+            .timeout(Duration::from_secs(5))
+    )
+    .build();
+
+// This times out after 5 seconds
+let result = bash.exec("sleep 10").await;
+assert!(result.is_err());
+```
+
+**Threat Mitigation:**
+- TM-DOS-023: CPU exhaustion
+
+### `parser_timeout()`
+
+Set parsing timeout (separate from execution timeout).
+
+```rust
+pub fn parser_timeout(mut self, timeout: Duration) -> Self
+```
+
+<ParamField path="timeout" type="Duration" required>
+  Maximum parsing time
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+use std::time::Duration;
+
+let mut bash = Bash::builder()
+    .limits(
+        ExecutionLimits::new()
+            .parser_timeout(Duration::from_secs(1))
+    )
+    .build();
+```
+
+**Threat Mitigation:**
+- TM-DOS-024: Parser hang attacks
+- V3: Pathological input causing slow parsing
+
+## Input Limits
+
+### `max_input_bytes()`
+
+Set maximum script size in bytes.
+
+```rust
+pub fn max_input_bytes(mut self, bytes: usize) -> Self
+```
+
+<ParamField path="bytes" type="usize" required>
+  Maximum script size in bytes
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+
+let mut bash = Bash::builder()
+    .limits(
+        ExecutionLimits::new()
+            .max_input_bytes(1_000_000)  // 1MB
+    )
+    .build();
+
+// Scripts larger than 1MB are rejected before parsing
+let huge_script = "echo hello\n".repeat(100_000);
+let result = bash.exec(&huge_script).await;
+assert!(result.is_err());
+```
+
+**Threat Mitigation:**
+- TM-DOS-001: Large script input
+- V1: Memory exhaustion from huge scripts
+
+### `max_ast_depth()`
+
+Set maximum AST nesting depth during parsing.
+
+```rust
+pub fn max_ast_depth(mut self, depth: usize) -> Self
+```
+
+<ParamField path="depth" type="usize" required>
+  Maximum AST nesting levels
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+
+let mut bash = Bash::builder()
+    .limits(
+        ExecutionLimits::new()
+            .max_ast_depth(50)
+    )
+    .build();
+
+// Deeply nested syntax exceeds AST depth
+let deep_nesting = "if true; then ".repeat(100) + "echo nested" + &" fi;".repeat(100);
+let result = bash.exec(&deep_nesting).await;
+assert!(result.is_err());
+```
+
+**Threat Mitigation:**
+- TM-DOS-022: Parser recursion / stack overflow
+- V4: Deeply nested scripts
+
+### `max_parser_operations()`
+
+Set maximum parser operations (fuel model for parsing).
+
+```rust
+pub fn max_parser_operations(mut self, ops: usize) -> Self
+```
+
+<ParamField path="ops" type="usize" required>
+  Maximum parser operations
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+
+let mut bash = Bash::builder()
+    .limits(
+        ExecutionLimits::new()
+            .max_parser_operations(50_000)
+    )
+    .build();
+```
+
+**Threat Mitigation:**
+- TM-DOS-024: Parser CPU exhaustion
+
+## Complete Example
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::builder()
+        .limits(
+            ExecutionLimits::new()
+                // Command limits
+                .max_commands(5_000)
+                
+                // Loop limits
+                .max_loop_iterations(1_000)
+                .max_total_loop_iterations(10_000)
+                
+                // Recursion limit
+                .max_function_depth(50)
+                
+                // Timeouts
+                .timeout(Duration::from_secs(60))
+                .parser_timeout(Duration::from_secs(2))
+                
+                // Input limits
+                .max_input_bytes(5_000_000)  // 5MB
+                .max_ast_depth(75)
+                .max_parser_operations(75_000)
+        )
+        .build();
+    
+    // Execute with limits enforced
+    let result = bash.exec("for i in {1..500}; do echo $i; done").await?;
+    println!("Executed {} commands", result.stdout.lines().count());
+    
+    Ok(())
+}
+```
+
+## Limit Exceeded Errors
+
+When a limit is exceeded, execution stops and returns an error:
+
+```rust
+use bashkit::{Bash, ExecutionLimits, Error};
+
+let mut bash = Bash::builder()
+    .limits(ExecutionLimits::new().max_commands(10))
+    .build();
+
+match bash.exec("for i in {1..100}; do echo $i; done").await {
+    Err(Error::ResourceLimit(limit_error)) => {
+        println!("Limit exceeded: {}", limit_error);
+        // "maximum command count exceeded (10)"
+    }
+    _ => {}
+}
+```
+
+## Security Considerations
+
+### Multi-Tenant Environments
+
+For multi-tenant systems, use conservative limits:
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+use std::time::Duration;
+
+let tenant_limits = ExecutionLimits::new()
+    .max_commands(1_000)          // Lower than default
+    .max_loop_iterations(1_000)   // Lower than default
+    .max_total_loop_iterations(10_000)  // Much lower
+    .timeout(Duration::from_secs(10))   // Shorter timeout
+    .max_input_bytes(1_000_000);  // 1MB max script
+```
+
+### Trusted Scripts
+
+For trusted internal scripts, you can increase limits:
+
+```rust
+let trusted_limits = ExecutionLimits::new()
+    .max_commands(100_000)
+    .max_loop_iterations(100_000)
+    .timeout(Duration::from_secs(300));  // 5 minutes
+```
+
+### CI/CD Pipelines
+
+For CI/CD, balance automation needs with safety:
+
+```rust
+let ci_limits = ExecutionLimits::new()
+    .max_commands(50_000)
+    .timeout(Duration::from_secs(600));  // 10 minutes
+```
+
+## See Also
+
+- [BashBuilder](/api/bash-builder) - Apply limits during construction
+- [ExecutionCounters](/api/execution-counters) - Track current resource usage

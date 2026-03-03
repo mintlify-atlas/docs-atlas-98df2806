@@ -1,0 +1,289 @@
+---
+title: MCP Server
+description: Running bashkit as a Model Context Protocol server
+---
+
+Bashkit can run as an MCP (Model Context Protocol) server, exposing bash execution capabilities to AI models and other MCP clients.
+
+## Start the Server
+
+Run bashkit in MCP mode:
+
+```bash
+bashkit mcp
+```
+
+The server communicates via JSON-RPC 2.0 over stdin/stdout and will continue running until terminated.
+
+## Protocol Details
+
+### Transport
+
+- **Input**: JSON-RPC 2.0 requests on stdin (one per line)
+- **Output**: JSON-RPC 2.0 responses on stdout
+- **Protocol Version**: `2024-11-05`
+
+### Server Info
+
+```json
+{
+  "name": "bashkit",
+  "version": "0.1.0"
+}
+```
+
+## Available Tools
+
+The server exposes a single `bash` tool:
+
+### bash
+
+Execute a bash script in a virtual environment.
+
+**Input Schema**:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "script": {
+      "type": "string",
+      "description": "The bash script to execute"
+    }
+  },
+  "required": ["script"]
+}
+```
+
+**Example Request**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "bash",
+    "arguments": {
+      "script": "echo 'Hello from MCP'"
+    }
+  }
+}
+```
+
+**Example Response**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Hello from MCP\n"
+      }
+    ]
+  }
+}
+```
+
+## Response Format
+
+Successful executions return:
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "<stdout>\n[stderr]\n<stderr>\n[exit code: N]"
+    }
+  ],
+  "isError": true  // only present if exit code != 0
+}
+```
+
+- **stdout**: Captured standard output
+- **stderr**: Captured standard error (prefixed with `[stderr]` if present)
+- **exit code**: Non-zero exit codes are appended (prefixed with `[exit code: N]`)
+- **isError**: Set to `true` when exit code is non-zero
+
+## Supported Methods
+
+### initialize
+
+Initialize the MCP connection.
+
+**Request**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {}
+}
+```
+
+**Response**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {
+      "tools": {}
+    },
+    "serverInfo": {
+      "name": "bashkit",
+      "version": "0.1.0"
+    }
+  }
+}
+```
+
+### initialized
+
+Confirm initialization complete.
+
+**Request**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "initialized",
+  "params": {}
+}
+```
+
+### tools/list
+
+List available tools.
+
+**Request**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/list",
+  "params": {}
+}
+```
+
+**Response**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+    "tools": [
+      {
+        "name": "bash",
+        "description": "Execute a bash script in a virtual environment",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "script": {
+              "type": "string",
+              "description": "The bash script to execute"
+            }
+          },
+          "required": ["script"]
+        }
+      }
+    ]
+  }
+}
+```
+
+### tools/call
+
+Execute a tool (see examples above).
+
+### shutdown
+
+Gracefully shutdown the server.
+
+**Request**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 99,
+  "method": "shutdown",
+  "params": {}
+}
+```
+
+## Error Handling
+
+### Parse Errors
+
+Invalid JSON returns error code `-32700`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": null,
+  "error": {
+    "code": -32700,
+    "message": "Parse error: <details>"
+  }
+}
+```
+
+### Unknown Methods
+
+Unknown methods return error code `-32601`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32601,
+    "message": "Method not found"
+  }
+}
+```
+
+### Invalid Arguments
+
+Invalid tool arguments return error code `-32602`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32602,
+    "message": "Invalid arguments: <details>"
+  }
+}
+```
+
+### Execution Errors
+
+Script execution errors are returned as successful responses with `isError: true`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Error: <details>"
+      }
+    ],
+    "isError": true
+  }
+}
+```

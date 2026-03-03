@@ -1,0 +1,315 @@
+---
+title: Security Model
+description: Overview of BashKit's security architecture and protections
+---
+
+BashKit is designed to execute untrusted bash scripts safely in virtual environments.
+
+## Threat Actors
+
+BashKit assumes all script input is potentially malicious:
+
+- **Malicious scripts** from untrusted sources
+- **Buggy scripts** from AI agents
+- **Compromised scripts** with injected code
+
+## Protected Assets
+
+- Host CPU and memory
+- Host filesystem
+- Network resources
+- Secrets and credentials
+- Other tenants (multi-tenant environments)
+
+## Security Principles
+
+1. **Default deny** - Everything is forbidden unless explicitly allowed
+2. **Defense in depth** - Multiple layers of protection
+3. **Fail secure** - Errors should not compromise security
+4. **Least privilege** - Minimal capabilities by default
+
+## Threat Categories
+
+### Denial of Service (DoS)
+
+Scripts may attempt to exhaust system resources.
+
+**Mitigations:**
+
+- Command count limits (default: 10,000)
+- Loop iteration limits (default: 100,000)
+- Function recursion limits (default: 100)
+- Parser depth limits (default: 100)
+- Input size limits (default: 10MB)
+- Output size limits (default: 10MB)
+- Execution timeout (default: 30s)
+- Parser timeout (default: 5s)
+- Filesystem limits (100MB total, 10K files)
+
+### Sandbox Escape
+
+Scripts may attempt to break out of the sandbox.
+
+**Mitigations:**
+
+- Virtual filesystem by default (no real FS access)
+- Path normalization prevents traversal attacks
+- Symlinks stored but not followed
+- No external process spawning
+- `exec` builtin not implemented
+- Script execution stays within sandbox
+
+### Information Disclosure
+
+Scripts may attempt to leak sensitive information.
+
+**Mitigations:**
+
+- System builtins return configurable virtual values
+- No access to host environment by default
+- Network allowlist prevents unauthorized exfiltration
+- Error messages sanitized
+- Panic messages never exposed
+
+**Caller Responsibility:** Do not pass sensitive environment variables.
+
+### Network Abuse
+
+Scripts may attempt unauthorized network access.
+
+**Mitigations:**
+
+- Network disabled by default
+- URL allowlist required (default-deny)
+- Response size limits (10MB)
+- Request timeout (30s)
+- No automatic redirects
+- No automatic decompression (zip bomb protection)
+- Connection timeout (10s)
+
+### Injection Attacks
+
+Scripts may attempt code injection.
+
+**Mitigations:**
+
+- Variables expand to strings, not re-parsed
+- Path normalization prevents injection
+- No null byte support (Rust strings)
+- eval sandboxed (builtins only)
+
+## Security Architecture
+
+```
+┌─────────────────────────────────────────┐
+│          UNTRUSTED INPUT                │
+│        (bash script code)               │
+└──────────────┬──────────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────────┐
+│      TRUST BOUNDARY: Bash::exec()       │
+└──────────────┬──────────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────────┐
+│         VIRTUAL ENVIRONMENT             │
+│                                         │
+│  ┌──────────┐  ┌──────────┐           │
+│  │  Parser  │→ │Interpreter│           │
+│  └──────────┘  └──────────┘           │
+│                                         │
+│  ┌──────────┐  ┌──────────┐           │
+│  │Virtual FS│  │ Network  │           │
+│  │          │  │Allowlist │           │
+│  └──────────┘  └──────────┘           │
+│                                         │
+│  Controls: Resource Limits              │
+└─────────────────────────────────────────┘
+```
+
+## Resource Limits
+
+### Execution Limits
+
+Configurable via `ExecutionLimits`:
+
+```rust
+use bashkit::ExecutionLimits;
+use std::time::Duration;
+
+let limits = ExecutionLimits::new()
+    .max_commands(10_000)
+    .max_loop_iterations(10_000)
+    .max_function_depth(100)
+    .timeout(Duration::from_secs(30))
+    .max_input_bytes(10_000_000);  // 10MB
+```
+
+### Filesystem Limits
+
+Configurable via `FsLimits`:
+
+```rust
+use bashkit::FsLimits;
+
+let fs_limits = FsLimits::new()
+    .max_total_bytes(100_000_000)  // 100MB
+    .max_file_size(10_000_000)     // 10MB per file
+    .max_file_count(10_000);
+```
+
+## Virtual Filesystem
+
+By default, scripts run in a completely isolated in-memory filesystem:
+
+```rust
+use bashkit::Bash;
+
+// Fully isolated - no real filesystem access
+let bash = Bash::new();
+```
+
+Optional real filesystem access requires explicit mounting:
+
+```rust
+use bashkit::{Bash, MountableFs};
+use std::sync::Arc;
+
+let mut fs = MountableFs::new();
+fs.mount_readonly("/data", "/real/path/to/data");
+
+let bash = Bash::builder()
+    .fs(Arc::new(fs))
+    .build();
+```
+
+## Network Allowlist
+
+Network access requires explicit allowlist:
+
+```rust
+use bashkit::{Bash, NetworkAllowlist};
+
+let allowlist = NetworkAllowlist::new()
+    .allow("https://api.example.com")
+    .allow("https://cdn.example.com/assets/");
+
+let bash = Bash::builder()
+    .network(allowlist)
+    .build();
+```
+
+**Security features:**
+
+- Literal host matching (no DNS resolution)
+- Scheme enforcement (http vs https)
+- Port enforcement
+- Path prefix matching
+- No wildcard subdomains (prevents exfiltration)
+
+## Virtual Identity
+
+System builtins return configurable virtual values:
+
+```rust
+use bashkit::Bash;
+
+let bash = Bash::builder()
+    .username("sandbox")         // whoami returns "sandbox"
+    .hostname("bashkit-sandbox") // hostname returns "bashkit-sandbox"
+    .build();
+```
+
+These builtins never reveal real host information:
+
+- `whoami` - Virtual username
+- `hostname` - Virtual hostname
+- `uname` - Virtual system info
+- `id` - Virtual user/group IDs
+- `$$` - Virtual PID
+
+## Error Handling
+
+BashKit is designed to never crash:
+
+- All builtin panics caught with `catch_unwind`
+- Panic messages sanitized (never exposed)
+- Error messages safe for user display
+- No stack traces or memory addresses leaked
+
+## Multi-Tenant Isolation
+
+Each `Bash` instance is fully isolated:
+
+```rust
+use bashkit::{Bash, InMemoryFs};
+use std::sync::Arc;
+
+// Each tenant gets isolated instance
+let tenant_a = Bash::builder()
+    .fs(Arc::new(InMemoryFs::new()))
+    .build();
+
+let tenant_b = Bash::builder()
+    .fs(Arc::new(InMemoryFs::new()))
+    .build();
+
+// tenant_a cannot access tenant_b's files or state
+```
+
+## Caller Responsibilities
+
+### Do NOT pass sensitive environment variables
+
+```rust
+// UNSAFE - secrets may be leaked
+let bash = Bash::builder()
+    .env("DATABASE_URL", "postgres://user:pass@host/db")
+    .env("API_KEY", "sk-secret-key")
+    .build();
+
+// SAFE - only pass non-sensitive variables
+let bash = Bash::builder()
+    .env("HOME", "/home/user")
+    .env("TERM", "xterm")
+    .build();
+```
+
+### Sanitize output for display
+
+Output may contain ANSI escape sequences:
+
+```rust
+let result = bash.exec(script).await?;
+// Sanitize before displaying in terminal/web UI
+let safe_output = sanitize_terminal_escapes(&result.stdout);
+```
+
+## Security Testing
+
+BashKit includes comprehensive security tests:
+
+- **Threat Model Tests** - 117 tests covering all threat categories
+- **Unicode Security Tests** - Byte-boundary panics, invisible chars
+- **Nesting Depth Tests** - Parser depth attack scenarios
+- **Network Security** - 53 tests for HTTP attack vectors
+- **Fail-Point Tests** - Injection testing for security controls
+- **Fuzz Testing** - Parser and lexer fuzzing
+
+## Threat Model
+
+For detailed threat analysis, see:
+
+- [Threat Model](/resources/threat-model) - Complete threat analysis with stable IDs
+- [specs/006-threat-model.md](https://github.com/everruns/bashkit/blob/main/specs/006-threat-model.md) - Internal specification
+
+## Reporting Security Issues
+
+If you discover a security vulnerability, please report it privately via GitHub Security Advisories rather than opening a public issue.
+
+## See Also
+
+- [Threat Model](/resources/threat-model) - Detailed threat analysis
+- [POSIX Compliance](/resources/posix-compliance) - Security exclusions
+- [Compatibility](/resources/compatibility) - Intentionally unimplemented features

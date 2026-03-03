@@ -1,0 +1,289 @@
+---
+title: Installation
+description: Install BashKit in your Rust project with cargo and configure optional features like git, python, and HTTP client support.
+---
+
+BashKit is available on [crates.io](https://crates.io/crates/bashkit) and can be added to your Rust project with cargo.
+
+## Basic installation
+
+<CodeGroup>
+```bash cargo add
+cargo add bashkit
+```
+
+```toml Cargo.toml
+[dependencies]
+bashkit = "0.1"
+```
+</CodeGroup>
+
+This installs the core BashKit library with:
+- Virtual bash interpreter
+- In-memory virtual filesystem
+- 100+ built-in commands
+- Resource limits
+- No network access
+
+## Optional features
+
+BashKit provides several optional features that can be enabled based on your needs.
+
+### HTTP client (curl/wget)
+
+Enable network access with allowlist-controlled `curl` and `wget` commands:
+
+<CodeGroup>
+```bash cargo add
+cargo add bashkit --features http_client
+```
+
+```toml Cargo.toml
+[dependencies]
+bashkit = { version = "0.1", features = ["http_client"] }
+```
+</CodeGroup>
+
+Example usage:
+
+```rust
+use bashkit::{Bash, NetworkAllowlist};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut bash = Bash::builder()
+        .network(NetworkAllowlist::new()
+            .allow("https://api.example.com")
+            .allow("https://cdn.example.com"))
+        .build();
+
+    // curl and wget now work for allowed URLs
+    let result = bash.exec("curl -s https://api.example.com/data").await?;
+    println!("{}", result.stdout);
+
+    Ok(())
+}
+```
+
+<Warning>
+  Network access is disabled by default. Only URLs matching the allowlist patterns can be accessed. Using `NetworkAllowlist::allow_all()` is dangerous and should only be used for testing.
+</Warning>
+
+### Git support (experimental)
+
+Enable virtual git operations on the virtual filesystem:
+
+<CodeGroup>
+```bash cargo add
+cargo add bashkit --features git
+```
+
+```toml Cargo.toml
+[dependencies]
+bashkit = { version = "0.1", features = ["git"] }
+```
+</CodeGroup>
+
+Example usage:
+
+```rust
+use bashkit::{Bash, GitConfig};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut bash = Bash::builder()
+        .git(GitConfig::new()
+            .author("Deploy Bot", "deploy@example.com"))
+        .build();
+
+    // Git operations work on the virtual filesystem
+    bash.exec("git init").await?;
+    bash.exec("echo 'hello' > file.txt").await?;
+    bash.exec("git add file.txt").await?;
+    bash.exec("git commit -m 'initial commit'").await?;
+    
+    let result = bash.exec("git log --oneline").await?;
+    println!("{}", result.stdout);
+
+    Ok(())
+}
+```
+
+<Note>
+  Git support is experimental. All git data lives in the virtual filesystem—no host filesystem access. Supported commands include `init`, `add`, `commit`, `status`, `log`, `branch`, `checkout`, `diff`, and `reset`.
+</Note>
+
+### Python support (experimental)
+
+Enable embedded Python 3.12 interpreter via [Monty](https://github.com/pydantic/monty):
+
+<CodeGroup>
+```bash cargo add
+cargo add bashkit --features python
+```
+
+```toml Cargo.toml
+[dependencies]
+bashkit = { version = "0.1", features = ["python"] }
+```
+</CodeGroup>
+
+Example usage:
+
+```rust
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut bash = Bash::builder().python().build();
+
+    // Inline Python code
+    let result = bash.exec("python3 -c 'print(2 ** 10)'").await?;
+    println!("{}", result.stdout); // "1024\n"
+
+    // VFS bridging: files shared between bash and Python
+    bash.exec("echo 'data' > /tmp/shared.txt").await?;
+    bash.exec(r#"python3 -c "
+        from pathlib import Path
+        print(Path('/tmp/shared.txt').read_text().strip())
+    "#).await?;
+    // Prints: "data"
+
+    Ok(())
+}
+```
+
+<Warning>
+  Python support is experimental with known security limitations. Python `pathlib.Path` operations are bridged to the virtual filesystem, but `open()` is not supported. No network access, classes, or third-party imports are available.
+</Warning>
+
+### Logging
+
+Enable structured logging via the `tracing` crate:
+
+<CodeGroup>
+```bash cargo add
+cargo add bashkit --features logging
+```
+
+```toml Cargo.toml
+[dependencies]
+bashkit = { version = "0.1", features = ["logging"] }
+```
+</CodeGroup>
+
+Example usage:
+
+```rust
+use bashkit::{Bash, LogConfig};
+use tracing_subscriber;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Initialize tracing subscriber
+    tracing_subscriber::fmt::init();
+
+    let mut bash = Bash::builder()
+        .log_config(LogConfig::new()
+            .redact_env("MY_SECRET_KEY"))
+        .build();
+
+    let result = bash.exec("echo 'Hello, World!'").await?;
+    // Logs will show script execution details
+
+    Ok(())
+}
+```
+
+<Tip>
+  Sensitive data is automatically redacted from logs by default. Environment variables matching secret patterns (PASSWORD, TOKEN, API_KEY, etc.) and URL credentials are sanitized.
+</Tip>
+
+### Combining features
+
+You can enable multiple features together:
+
+<CodeGroup>
+```bash cargo add
+cargo add bashkit --features http_client,git,logging
+```
+
+```toml Cargo.toml
+[dependencies]
+bashkit = { version = "0.1", features = ["http_client", "git", "logging"] }
+```
+</CodeGroup>
+
+## Dependencies
+
+BashKit requires:
+
+- **Rust**: 1.70 or later
+- **Tokio**: Async runtime (add with `features = ["full"]`)
+
+```toml Cargo.toml
+[dependencies]
+bashkit = "0.1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"  # For error handling in examples
+```
+
+## Minimal example
+
+Here's a complete minimal example to verify your installation:
+
+```rust src/main.rs
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut bash = Bash::new();
+    let result = bash.exec("echo 'BashKit is installed!'").await?;
+    println!("{}", result.stdout);
+    assert_eq!(result.exit_code, 0);
+    Ok(())
+}
+```
+
+Run with:
+
+```bash
+cargo run
+```
+
+## Platform support
+
+BashKit is tested on:
+
+- **Linux**: x86_64, aarch64
+- **macOS**: x86_64, aarch64 (Apple Silicon)
+- **Windows**: x86_64
+
+All platforms support the full feature set.
+
+## Version compatibility
+
+BashKit follows semantic versioning:
+
+- **0.1.x**: Current stable release
+- Breaking changes will increment the minor version until 1.0
+- Patch releases (0.1.x) contain bug fixes and non-breaking improvements
+
+Check the [changelog](https://github.com/everruns/bashkit/releases) for detailed release notes.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get started with your first BashKit script
+  </Card>
+  <Card title="API Reference" icon="code" href="https://docs.rs/bashkit">
+    Explore the complete API documentation
+  </Card>
+  <Card title="Examples" icon="book" href="https://github.com/everruns/bashkit/tree/main/crates/bashkit/examples">
+    See real-world examples on GitHub
+  </Card>
+  <Card title="Security" icon="shield" href="https://github.com/everruns/bashkit/blob/main/SECURITY.md">
+    Learn about security features and best practices
+  </Card>
+</CardGroup>

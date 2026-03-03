@@ -1,0 +1,233 @@
+---
+title: Changelog
+description: BashKit release history and version notes
+---
+
+All notable changes to BashKit are documented here.
+
+## [0.1.8] - 2026-03-01
+
+### Highlights
+
+- Stderr and combined redirects (`2>`, `2>&1`, `&>`) for real-world script compatibility
+- ANSI-C quoting (`$'...'`) and `$"..."` syntax support
+- New builtins: `base64`, `md5sum`/`sha1sum`/`sha256sum`, `find -exec`, `grep -L/--exclude-dir`
+- `jq` enhancements: `setpath`, `leaf_paths`, improved `match`/`scan`
+- Recursive variable deref and array access in arithmetic expressions
+- `awk` user-defined functions, `curl -F` multipart form data
+- `tar -C/-O` flags, `xargs` command execution
+- Per-tool-call `timeout_ms` in ToolRequest
+- 244 new Oils-inspired spec tests
+- 20+ interpreter/parser bug fixes
+
+### What's Changed
+
+- feat: stderr and combined redirects (2>, 2>&1, &>)
+- feat: ANSI-C quoting ($'...') and $"..." syntax
+- feat: recursive variable deref in arithmetic
+- feat: base64, md5sum, sha1sum, sha256sum builtins
+- feat: find -exec command execution
+- feat: grep -L, --exclude-dir, -s, -Z flags
+- feat: jq setpath, leaf_paths, improved match/scan
+- feat: awk user-defined functions
+- feat: curl -F multipart form data
+- feat: tar -C/-O flags
+- feat: per-tool-call timeout_ms in ToolRequest
+- fix: heredoc pipe ordering and edge cases
+- fix: count unicode chars in `${#x}`
+- fix: isolate subshell state for functions/cwd/traps
+- fix: split command substitution output on IFS
+- fix: write heredoc content when redirected to file
+- fix: truncate exit codes to 8-bit range
+- fix: xargs execute commands instead of echoing
+- test: add 244 Oils-inspired spec tests
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.7...v0.1.8
+
+## [0.1.7] - 2026-02-26
+
+### Highlights
+
+- 20+ new builtins: `declare`/`typeset`, `let`, `getopts`, `trap`, `caller`, `shopt`, `pushd`/`popd`/`dirs`, `seq`, `tac`, `rev`, `yes`, `expr`, `mktemp`, `realpath`
+- Glob options: `dotglob`, `nocaseglob`, `failglob`, `noglob`, `globstar`
+- Shell flags: `bash -e/-x/-u/-f/-o`, `set -x` xtrace debugging
+- `select` construct, `case ;;&` fallthrough, `FUNCNAME` variable
+- Nameref variables (`declare -n`), case conversion (`declare -l/-u`)
+- 10+ bug fixes for quoting, arrays, globs, and redirections
+
+### What's Changed
+
+- feat: bash/sh -e/-x/-u/-f/-o flags
+- feat: glob options (dotglob, nocaseglob, failglob, noglob, globstar)
+- feat: pushd, popd, dirs builtins
+- feat: file comparison test operators
+- feat: expr builtin
+- feat: yes and realpath builtins
+- feat: caller builtin
+- feat: printf %q shell quoting
+- feat: tac and rev builtins
+- feat: seq builtin
+- feat: mktemp builtin
+- feat: trap -p flag and sorted trap listing
+- feat: set -o / set +o option display
+- feat: declare -l/-u case conversion attributes
+- feat: declare -n nameref variables
+- feat: shopt builtin with nullglob enforcement
+- feat: set -x xtrace debugging
+- feat: auto-populate shell variables (PWD, HOME, USER, etc.)
+- feat: select construct
+- feat: let builtin and declare -i arithmetic
+- feat: case ;& and ;;& fallthrough
+- feat: FUNCNAME special variable
+- fix: backslash-newline line continuation in double quotes
+- fix: nested double quotes inside $() in double-quoted strings
+- fix: input redirections on compound commands
+- fix: glob pattern matching in [[ == ]] and [[ != ]]
+- fix: negative array indexing ${arr[-1]}
+- fix: BASH_REMATCH not populated when regex starts with parens
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.6...v0.1.7
+
+## [0.1.6] - 2026-02-20
+
+### Highlights
+
+- ScriptedTool for composing multi-tool bash orchestration with Python/LangChain bindings
+- Streaming output support for Tool trait
+- Script file execution by path
+- 10 interpreter bug fixes surfaced by eval harness
+
+### What's Changed
+
+- feat: ScriptedTool for multi-tool bash composition
+- feat: streaming output support for Tool trait
+- feat: script file execution by path
+- feat: PydanticAI integration and example
+- fix: 10 eval-surfaced interpreter bugs
+- fix: apply brace/glob expansion in for-loop word list
+- fix: jq argument parsing and test coverage
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.5...v0.1.6
+
+## [0.1.5] - 2026-02-17
+
+### Highlights
+
+- Direct Monty Python integration (removed subprocess worker)
+- Improved AWK parser: match, gensub, power operators, printf formats
+- PyPI publishing with pre-built wheels for all major platforms
+- Bug fixes for sed, parser redirections, array expansion, env assignments
+
+### What's Changed
+
+- refactor: direct Monty integration, remove worker subprocess
+- feat: PyPI publishing with pre-built wheels
+- fix: expand array args as separate fields
+- fix: prefix env assignments visible to commands
+- fix: sed ampersand replacement and escape handling
+- fix: support output redirection on compound commands
+- fix: use streaming JSON deserializer in jq
+- fix: handle escape sequences in AWK -F field separator
+- fix: improve AWK parser with match, gensub, power, printf
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.4...v0.1.5
+
+## [0.1.4] - 2026-02-09
+
+### Highlights
+
+- jq builtin now supports file arguments
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.3...v0.1.4
+
+## [0.1.3] - 2026-02-08
+
+### Highlights
+
+- 9 new CLI tools: nl, paste, column, comm, diff, strings, od, xxd, hexdump
+- Security hardening: parser depth limits, path validation, nested loop threat mitigation
+- Embedded Python interpreter via Monty with subprocess isolation
+- LLM evaluation harness for tool usage testing
+- Improved bash compatibility for LLM-generated scripts
+
+### What's Changed
+
+- feat: add 9 CLI tools (nl, paste, column, comm, diff, strings, od, xxd, hexdump)
+- feat: embed Monty Python interpreter with VFS bridging
+- feat: subprocess isolation for Monty crash protection
+- feat: LLM evaluation harness
+- fix: mitigate parser depth overflow attacks
+- fix: add depth limits to awk/jq builtin parsers
+- fix: mitigate path validation and nested loop threats
+- fix: close 5 critical gaps blocking LLM-generated scripts
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.2...v0.1.3
+
+## [0.1.2] - 2026-02-06
+
+### Highlights
+
+- Python bindings with LangChain and Deep Agents integrations
+- Virtual git support (branch, checkout, diff, reset)
+- Bash/sh script execution commands
+- Virtual filesystem improvements
+
+### What's Changed
+
+- feat: bash and sh commands for script execution
+- feat: Python bindings and LangChain integration
+- feat: Deep Agents integration with shared VFS
+- feat: sandboxed git support (branch, checkout, diff, reset)
+- feat: /dev/null support at interpreter level
+- fix: prevent duplicate file/directory names
+- fix: normalize paths and support root directory access
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.1...v0.1.2
+
+## [0.1.1] - 2026-02-04
+
+### Highlights
+
+- Network commands: curl/wget timeout flags
+- Parser improvements: $LINENO variable and line numbers in errors
+- jq enhanced: new flags (-S, -s, -e, --tab, -j, -c, -n)
+- sed: in-place editing with -i flag
+- Structured logging with automatic security redaction
+
+### What's Changed
+
+- feat: curl/wget timeout support with safety limits
+- feat: line number support for $LINENO and error messages
+- feat: sed -i in-place editing flag
+- feat: Tool trait refactor with improved outputs
+- feat: jq -S, -s, -e, --tab, -j, -c, -n flags
+- feat: positional params iteration in for loops
+- feat: structured logging with security redaction
+- fix: printf format repeat
+- fix: quoted heredoc delimiters
+- fix: date timezone format errors
+- fix: missing parameter expansion
+- fix: echo combined flags
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.0...v0.1.1
+
+## [0.1.0] - 2026-02-02
+
+### Highlights
+
+Initial release of BashKit virtual bash interpreter:
+
+- Core interpreter with bash-compatible syntax support
+- Virtual filesystem (VFS) abstraction
+- Resource limits: memory, execution time, operation count
+- Built-in commands: echo, printf, cat, head, tail, wc, grep, sed, awk, jq, sort, uniq, cut, tr, date, and more
+- CLI tool for running scripts and interactive REPL
+- Security testing with fail-point injection
+
+**Full Changelog**: https://github.com/everruns/bashkit/commits/v0.1.0
+
+## See Also
+
+- [GitHub Releases](https://github.com/everruns/bashkit/releases) - Full release notes
+- [Compatibility](/resources/compatibility) - Feature tracking
+- [Contributing](/resources/contributing) - Development guide

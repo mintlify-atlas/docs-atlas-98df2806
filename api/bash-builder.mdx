@@ -1,0 +1,600 @@
+---
+title: BashBuilder
+description: Builder pattern for configuring Bash instances
+---
+
+## Overview
+
+`BashBuilder` provides a fluent API for configuring `Bash` instances with custom settings. All methods return `Self` for method chaining, and you call `.build()` at the end to create the configured `Bash` instance.
+
+## Getting Started
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+
+let bash = Bash::builder()
+    .env("HOME", "/home/user")
+    .username("deploy")
+    .hostname("prod-server")
+    .limits(ExecutionLimits::new().max_commands(1000))
+    .build();
+```
+
+## Configuration Methods
+
+### Filesystem
+
+#### `fs()`
+
+Set a custom filesystem implementation.
+
+```rust
+pub fn fs(self, fs: Arc<dyn FileSystem>) -> Self
+```
+
+<ParamField path="fs" type="Arc<dyn FileSystem>" required>
+  Custom filesystem implementation. See [FileSystem](/api/filesystem).
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, InMemoryFs, OverlayFs};
+use std::sync::Arc;
+
+let base = Arc::new(InMemoryFs::new());
+let overlay = Arc::new(OverlayFs::new(base));
+
+let bash = Bash::builder()
+    .fs(overlay)
+    .build();
+```
+
+### Environment Variables
+
+#### `env()`
+
+Set an environment variable.
+
+```rust
+pub fn env(self, key: impl Into<String>, value: impl Into<String>) -> Self
+```
+
+<ParamField path="key" type="impl Into<String>" required>
+  Environment variable name
+</ParamField>
+
+<ParamField path="value" type="impl Into<String>" required>
+  Environment variable value
+</ParamField>
+
+**Example:**
+
+```rust
+let bash = Bash::builder()
+    .env("API_KEY", "secret123")
+    .env("DEBUG", "true")
+    .build();
+```
+
+**Note:** Environment variables set via `env()` also become shell variables, so they override defaults like `HOME` and `USER`.
+
+#### `cwd()`
+
+Set the initial current working directory.
+
+```rust
+pub fn cwd(self, cwd: impl Into<PathBuf>) -> Self
+```
+
+<ParamField path="cwd" type="impl Into<PathBuf>" required>
+  Initial working directory path
+</ParamField>
+
+**Example:**
+
+```rust
+let bash = Bash::builder()
+    .cwd("/workspace")
+    .build();
+```
+
+### Virtual Identity
+
+#### `username()`
+
+Set the sandbox username (affects `whoami`, `id`, and `USER` env var).
+
+```rust
+pub fn username(self, username: impl Into<String>) -> Self
+```
+
+<ParamField path="username" type="impl Into<String>" required>
+  Virtual username
+</ParamField>
+
+**Example:**
+
+```rust
+let bash = Bash::builder()
+    .username("agent")
+    .build();
+// whoami returns "agent"
+// $USER is "agent"
+```
+
+**Affected Commands:**
+- `whoami` - Returns configured username
+- `id` - Uses configured username
+- Environment variable `USER` - Set automatically
+
+#### `hostname()`
+
+Set the sandbox hostname (affects `hostname` and `uname -n`).
+
+```rust
+pub fn hostname(self, hostname: impl Into<String>) -> Self
+```
+
+<ParamField path="hostname" type="impl Into<String>" required>
+  Virtual hostname
+</ParamField>
+
+**Example:**
+
+```rust
+let bash = Bash::builder()
+    .hostname("sandbox-42")
+    .build();
+// hostname returns "sandbox-42"
+```
+
+**Affected Commands:**
+- `hostname` - Returns configured hostname
+- `uname -n` - Returns configured hostname
+
+### Resource Limits
+
+#### `limits()`
+
+Set execution limits to prevent runaway scripts.
+
+```rust
+pub fn limits(self, limits: ExecutionLimits) -> Self
+```
+
+<ParamField path="limits" type="ExecutionLimits" required>
+  Resource limits. See [ExecutionLimits](/api/execution-limits).
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+use std::time::Duration;
+
+let bash = Bash::builder()
+    .limits(
+        ExecutionLimits::new()
+            .max_commands(5000)
+            .max_loop_iterations(1000)
+            .timeout(Duration::from_secs(60))
+    )
+    .build();
+```
+
+**Available Limits:**
+- `max_commands` - Maximum command executions (default: 10,000)
+- `max_loop_iterations` - Per-loop iteration limit (default: 10,000)
+- `max_total_loop_iterations` - Global loop iteration cap (default: 1,000,000)
+- `max_function_depth` - Recursion depth limit (default: 100)
+- `timeout` - Execution timeout (default: 30s)
+- `parser_timeout` - Parsing timeout (default: 5s)
+- `max_input_bytes` - Script size limit (default: 10MB)
+- `max_ast_depth` - AST nesting limit (default: 100)
+
+See [ExecutionLimits](/api/execution-limits) for details.
+
+### Network Access
+
+#### `network()`
+
+Configure network access for `curl` and `wget` builtins.
+
+```rust
+#[cfg(feature = "http_client")]
+pub fn network(self, allowlist: NetworkAllowlist) -> Self
+```
+
+<ParamField path="allowlist" type="NetworkAllowlist" required>
+  URL allowlist configuration. See [NetworkAllowlist](/api/network-allowlist).
+</ParamField>
+
+**Security:**
+- Default-deny model: only allowlisted URLs accessible
+- No DNS resolution (prevents DNS rebinding)
+- Scheme, host, port, and path prefix validation
+- 10MB response size limit
+- 30 second timeout
+- No automatic redirects
+
+**Example:**
+
+```rust
+use bashkit::{Bash, NetworkAllowlist};
+
+let bash = Bash::builder()
+    .network(
+        NetworkAllowlist::new()
+            .allow("https://api.example.com")
+            .allow("https://cdn.example.com/assets")
+    )
+    .build();
+```
+
+<Warning>
+Using `NetworkAllowlist::allow_all()` is dangerous and should only be used for testing.
+</Warning>
+
+### Custom Builtins
+
+#### `builtin()`
+
+Register a custom builtin command.
+
+```rust
+pub fn builtin(self, name: impl Into<String>, builtin: Box<dyn Builtin>) -> Self
+```
+
+<ParamField path="name" type="impl Into<String>" required>
+  Command name (e.g., "psql", "kubectl")
+</ParamField>
+
+<ParamField path="builtin" type="Box<dyn Builtin>" required>
+  Implementation of the Builtin trait
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, async_trait};
+
+struct Greet {
+    default_name: String,
+}
+
+#[async_trait]
+impl Builtin for Greet {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        let name = ctx.args.first()
+            .map(|s| s.as_str())
+            .unwrap_or(&self.default_name);
+        Ok(ExecResult::ok(format!("Hello, {}!\n", name)))
+    }
+}
+
+let bash = Bash::builder()
+    .builtin("greet", Box::new(Greet { 
+        default_name: "World".into() 
+    }))
+    .build();
+```
+
+**Builtin Context:**
+Custom builtins have access to:
+- `ctx.args` - Command arguments
+- `ctx.env` - Environment variables
+- `ctx.variables` - Shell variables
+- `ctx.fs` - Virtual filesystem
+- `ctx.stdin` - Pipeline stdin
+
+**Overriding Defaults:**
+Custom builtins can override default builtins if registered with the same name.
+
+### File Mounting
+
+#### `mount_text()`
+
+Mount a text file in the virtual filesystem during construction.
+
+```rust
+pub fn mount_text(self, path: impl Into<PathBuf>, content: impl Into<String>) -> Self
+```
+
+<ParamField path="path" type="impl Into<PathBuf>" required>
+  Absolute path where file will be created
+</ParamField>
+
+<ParamField path="content" type="impl Into<String>" required>
+  File content
+</ParamField>
+
+**Example:**
+
+```rust
+let bash = Bash::builder()
+    .mount_text("/config/app.conf", "debug=true\nport=8080\n")
+    .mount_text("/data/users.json", r#"["alice", "bob"]"#)
+    .build();
+```
+
+**Implementation:**
+- Creates file with mode `0o644` (readable/writable)
+- Parent directories created automatically
+- Uses OverlayFs layer on top of base filesystem
+- Base filesystem remains unchanged
+
+#### `mount_readonly_text()`
+
+Mount a readonly text file (mode `0o444`).
+
+```rust
+pub fn mount_readonly_text(
+    self,
+    path: impl Into<PathBuf>,
+    content: impl Into<String>,
+) -> Self
+```
+
+<ParamField path="path" type="impl Into<PathBuf>" required>
+  Absolute path where file will be created
+</ParamField>
+
+<ParamField path="content" type="impl Into<String>" required>
+  File content
+</ParamField>
+
+**Example:**
+
+```rust
+let bash = Bash::builder()
+    .mount_readonly_text("/etc/version", "1.2.3")
+    .mount_readonly_text("/etc/app.conf", "production=true\n")
+    .build();
+```
+
+**Use Cases:**
+- Configuration that shouldn't be modified
+- Reference data that should remain immutable
+- Simulating system files like `/etc/passwd`
+
+### Logging
+
+#### `log_config()`
+
+<Note>
+Requires the `logging` feature flag.
+</Note>
+
+Configure structured logging with sensitive data redaction.
+
+```rust
+#[cfg(feature = "logging")]
+pub fn log_config(self, config: LogConfig) -> Self
+```
+
+<ParamField path="config" type="LogConfig" required>
+  Logging configuration with redaction rules
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, LogConfig};
+
+let bash = Bash::builder()
+    .log_config(
+        LogConfig::new()
+            .redact_env("MY_CUSTOM_SECRET")
+    )
+    .build();
+```
+
+**Security (TM-LOG-001):**
+By default, sensitive data is redacted:
+- Environment variables matching secret patterns (PASSWORD, TOKEN, etc.)
+- URL credentials (user:pass@host)
+- Values that look like API keys or JWTs
+
+<Warning>
+Do not use `LogConfig::unsafe_disable_redaction()` or `LogConfig::unsafe_log_scripts()` in production.
+</Warning>
+
+### Git Support
+
+#### `git()`
+
+<Note>
+Requires the `git` feature flag.
+</Note>
+
+Enable git commands with virtual repository support.
+
+```rust
+#[cfg(feature = "git")]
+pub fn git(self, config: GitConfig) -> Self
+```
+
+<ParamField path="config" type="GitConfig" required>
+  Git configuration including author identity
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, GitConfig};
+
+let bash = Bash::builder()
+    .git(
+        GitConfig::new()
+            .author("CI Bot", "ci@example.com")
+    )
+    .build();
+```
+
+**Security:**
+- All operations confined to virtual filesystem
+- Author identity sandboxed (never from host)
+- No access to host git config or credentials
+- Repository paths cannot escape VFS
+
+**Threat Mitigations:**
+- TM-GIT-002: Host identity leak - uses configured author
+- TM-GIT-003: Host config access - no filesystem access outside VFS
+- TM-GIT-005: Repository escape - all paths within VFS
+
+### Python Support
+
+#### `python()`
+
+<Note>
+Requires the `python` feature flag (Monty interpreter).
+</Note>
+
+Enable embedded Python with default resource limits.
+
+```rust
+#[cfg(feature = "python")]
+pub fn python(self) -> Self
+```
+
+**Example:**
+
+```rust
+let bash = Bash::builder()
+    .python()
+    .build();
+// Enables python and python3 builtins
+```
+
+**Features:**
+- Python 3.12 compatibility
+- `pathlib.Path` operations bridge to VFS
+- Resource limits enforced (memory, allocations, time)
+
+**Limitations:**
+- No `open()` (use `pathlib.Path`)
+- No network access
+- No classes
+- No third-party imports
+
+#### `python_with_limits()`
+
+Enable embedded Python with custom resource limits.
+
+```rust
+#[cfg(feature = "python")]
+pub fn python_with_limits(self, limits: PythonLimits) -> Self
+```
+
+<ParamField path="limits" type="PythonLimits" required>
+  Custom resource limits for Python interpreter
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::PythonLimits;
+use std::time::Duration;
+
+let bash = Bash::builder()
+    .python_with_limits(
+        PythonLimits::default()
+            .max_duration(Duration::from_secs(5))
+    )
+    .build();
+```
+
+## Building
+
+### `build()`
+
+Build the configured Bash instance.
+
+```rust
+pub fn build(self) -> Bash
+```
+
+<ResponseField name="bash" type="Bash">
+  Configured Bash instance ready for script execution
+</ResponseField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+
+let mut bash = Bash::builder()
+    .env("HOME", "/home/user")
+    .limits(ExecutionLimits::new().max_commands(1000))
+    .build();
+
+let result = bash.exec("echo $HOME").await?;
+```
+
+**Post-Build:**
+After calling `build()`, the builder is consumed and you receive a `Bash` instance. You cannot reuse the builder.
+
+## Complete Example
+
+```rust
+use bashkit::{Bash, ExecutionLimits, NetworkAllowlist, Builtin, BuiltinContext, ExecResult, async_trait};
+use std::time::Duration;
+
+// Custom builtin
+struct Status;
+
+#[async_trait]
+impl Builtin for Status {
+    async fn execute(&self, _ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        Ok(ExecResult::ok("System OK\n"))
+    }
+}
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::builder()
+        // Virtual identity
+        .username("agent")
+        .hostname("agent-sandbox")
+        
+        // Environment
+        .env("API_URL", "https://api.example.com")
+        .cwd("/workspace")
+        
+        // Resource limits
+        .limits(
+            ExecutionLimits::new()
+                .max_commands(5000)
+                .timeout(Duration::from_secs(60))
+        )
+        
+        // Network access
+        .network(
+            NetworkAllowlist::new()
+                .allow("https://api.example.com")
+        )
+        
+        // Custom builtin
+        .builtin("status", Box::new(Status))
+        
+        // Pre-populate files
+        .mount_text("/config/app.conf", "version=1.0\n")
+        .mount_readonly_text("/etc/version", "1.0.0")
+        
+        .build();
+    
+    let result = bash.exec("status && cat /config/app.conf").await?;
+    println!("{}", result.stdout);
+    
+    Ok(())
+}
+```
+
+## See Also
+
+- [Bash](/api/bash) - Main interpreter struct
+- [ExecutionLimits](/api/execution-limits) - Resource limit configuration
+- [NetworkAllowlist](/api/network-allowlist) - Network access control
+- [FileSystem](/api/filesystem) - Virtual filesystem trait
+- [OverlayFs](/api/overlay-fs) - Layered filesystem for mounts

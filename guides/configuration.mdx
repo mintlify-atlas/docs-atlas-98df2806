@@ -1,0 +1,325 @@
+---
+title: Configuring Bash with BashBuilder
+description: Configure BashKit instances with limits, environment, filesystem, and virtual identity
+---
+
+Use `BashBuilder` to configure your Bash instance before execution. The builder provides methods for setting execution limits, environment variables, working directory, username, hostname, and custom filesystem implementations.
+
+## Basic Configuration
+
+Create a builder and chain configuration methods:
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+
+let bash = Bash::builder()
+    .env("HOME", "/home/user")
+    .username("deploy")
+    .hostname("prod-server")
+    .limits(ExecutionLimits::new().max_commands(1000))
+    .build();
+```
+
+Source: `crates/bashkit/src/lib.rs:710-723`
+
+## Execution Limits
+
+Configure resource limits to prevent runaway scripts:
+
+<ParamField path="max_commands" type="usize" default="10,000">
+  Maximum number of commands that can be executed (fuel model).
+  
+  Prevents command flooding attacks (TM-DOS-001, TM-DOS-002, TM-DOS-004, TM-DOS-019).
+</ParamField>
+
+<ParamField path="max_loop_iterations" type="usize" default="10,000">
+  Maximum iterations for a single loop.
+  
+  Prevents infinite loops (TM-DOS-016, TM-DOS-017). Resets when entering a new loop.
+</ParamField>
+
+<ParamField path="max_total_loop_iterations" type="usize" default="1,000,000">
+  Maximum total loop iterations across all loops (nested and sequential).
+  
+  Prevents nested loop multiplication attack (TM-DOS-018) where nested loops each reset their per-loop counter.
+</ParamField>
+
+<ParamField path="max_function_depth" type="usize" default="100">
+  Maximum function call depth (recursion limit).
+  
+  Prevents stack overflow from recursive functions (TM-DOS-020, TM-DOS-021).
+</ParamField>
+
+<ParamField path="timeout" type="Duration" default="30 seconds">
+  Execution timeout for the entire script.
+  
+  Prevents CPU exhaustion (TM-DOS-023).
+</ParamField>
+
+<ParamField path="parser_timeout" type="Duration" default="5 seconds">
+  Parser timeout (separate from execution timeout).
+  
+  Protects against parser hang attacks (TM-DOS-024).
+</ParamField>
+
+<ParamField path="max_input_bytes" type="usize" default="10MB">
+  Maximum input script size in bytes.
+  
+  Protects against memory exhaustion from large scripts (TM-DOS-001).
+</ParamField>
+
+<ParamField path="max_ast_depth" type="usize" default="100">
+  Maximum AST nesting depth during parsing.
+  
+  Protects against stack overflow from deeply nested scripts (TM-DOS-022).
+</ParamField>
+
+<ParamField path="max_parser_operations" type="usize" default="100,000">
+  Maximum parser operations (fuel model for parsing).
+  
+  Protects against parser DoS attacks (TM-DOS-024).
+</ParamField>
+
+Source: `crates/bashkit/src/limits.rs:30-76`
+
+### Example: Setting Limits
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+use std::time::Duration;
+
+let limits = ExecutionLimits::new()
+    .max_commands(1000)
+    .max_loop_iterations(10000)
+    .max_total_loop_iterations(100000)
+    .max_function_depth(50)
+    .timeout(Duration::from_secs(60));
+
+let mut bash = Bash::builder()
+    .limits(limits)
+    .build();
+```
+
+Source: `crates/bashkit/examples/resource_limits.rs:72-78`
+
+## Environment Variables
+
+Set environment variables that will be available to scripts:
+
+```rust
+let mut bash = Bash::builder()
+    .env("API_KEY", "secret123")
+    .env("DATABASE_URL", "postgres://localhost/db")
+    .env("HOME", "/home/user")
+    .build();
+
+let result = bash.exec("echo $API_KEY").await?;
+assert_eq!(result.stdout, "secret123\n");
+```
+
+Source: `crates/bashkit/src/lib.rs:781-785`
+
+Environment variables set via the builder:
+- Are available to all executed commands
+- Can be read via `$VAR` or `${VAR}` expansion
+- Are accessible to custom builtins via `ctx.env`
+- Are also set as shell variables
+
+## Current Working Directory
+
+Set the initial working directory:
+
+```rust
+use std::path::PathBuf;
+
+let mut bash = Bash::builder()
+    .cwd("/home/sandbox")
+    .build();
+
+let result = bash.exec("pwd").await?;
+assert_eq!(result.stdout, "/home/sandbox\n");
+```
+
+Source: `crates/bashkit/src/lib.rs:787-791`
+
+Scripts can change the working directory with `cd`, but the builder sets the initial location.
+
+## Virtual Identity
+
+Configure sandbox username and hostname for multi-tenant isolation:
+
+### Username
+
+```rust
+let mut bash = Bash::builder()
+    .username("deploy")
+    .build();
+
+let result = bash.exec("whoami").await?;
+assert_eq!(result.stdout, "deploy\n");
+```
+
+Source: `crates/bashkit/src/lib.rs:799-806`
+
+Setting username:
+- Configures `whoami` and `id` builtins to return this username
+- Automatically sets the `USER` environment variable
+- Useful for multi-tenant environments where each tenant has a virtual identity
+
+### Hostname
+
+```rust
+let mut bash = Bash::builder()
+    .hostname("prod-server")
+    .build();
+
+let result = bash.exec("hostname").await?;
+assert_eq!(result.stdout, "prod-server\n");
+```
+
+Source: `crates/bashkit/src/lib.rs:808-813`
+
+Setting hostname:
+- Configures `hostname` and `uname -n` builtins to return this hostname
+- No access to host system's hostname
+- Each sandbox can have its own virtual hostname
+
+### Combined Example
+
+```rust
+let mut bash = Bash::builder()
+    .username("deploy")
+    .hostname("prod-server")
+    .env("HOME", "/home/deploy")
+    .cwd("/home/deploy")
+    .build();
+
+let result = bash.exec("whoami && hostname && pwd").await?;
+assert_eq!(result.stdout, "deploy\nprod-server\n/home/deploy\n");
+```
+
+Source: `crates/bashkit/src/lib.rs:149-159`
+
+## Custom Filesystem
+
+Provide a custom filesystem implementation:
+
+```rust
+use bashkit::{Bash, InMemoryFs, OverlayFs, MountableFs};
+use std::sync::Arc;
+
+// Option 1: InMemoryFs (default)
+let fs = Arc::new(InMemoryFs::new());
+let bash = Bash::builder().fs(fs).build();
+
+// Option 2: OverlayFs (copy-on-write)
+let base = Arc::new(InMemoryFs::new());
+let overlay = Arc::new(OverlayFs::new(base));
+let bash = Bash::builder().fs(overlay).build();
+
+// Option 3: MountableFs (mount multiple filesystems)
+let mountable = Arc::new(MountableFs::new());
+let bash = Bash::builder().fs(mountable).build();
+```
+
+Source: `crates/bashkit/src/lib.rs:775-779`
+
+See the [Virtual Filesystem](/api-reference/filesystem) documentation for details on filesystem implementations.
+
+## Mounting Files
+
+Pre-populate files in the virtual filesystem:
+
+### Mount Text Files
+
+```rust
+let mut bash = Bash::builder()
+    .mount_text("/config/app.conf", "debug=true\nport=8080\n")
+    .mount_text("/data/users.json", r#"["alice", "bob"]"#)
+    .build();
+
+let result = bash.exec("cat /config/app.conf").await?;
+assert_eq!(result.stdout, "debug=true\nport=8080\n");
+```
+
+Source: `crates/bashkit/src/lib.rs:1024-1039`
+
+Mounted files:
+- Are created with mode `0o644` (readable and writable)
+- Parent directories are created automatically
+- Are added via an `OverlayFs` layer (base filesystem remains unchanged)
+- Take precedence over base filesystem files
+
+### Mount Readonly Files
+
+```rust
+let mut bash = Bash::builder()
+    .mount_readonly_text("/etc/version", "1.2.3")
+    .mount_readonly_text("/etc/app.conf", "production=true\n")
+    .build();
+
+// Can read the file
+let result = bash.exec("cat /etc/version").await?;
+assert_eq!(result.stdout, "1.2.3");
+
+// File has readonly permissions (mode 0o444)
+let stat = bash.fs().stat(std::path::Path::new("/etc/version")).await?;
+assert_eq!(stat.mode, 0o444);
+```
+
+Source: `crates/bashkit/src/lib.rs:1070-1086`
+
+Readonly files are useful for:
+- Configuration that shouldn't be modified by scripts
+- Reference data that should remain immutable
+- Simulating system files like `/etc/passwd`
+
+## Complete Example
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut bash = Bash::builder()
+        // Virtual identity
+        .username("deploy")
+        .hostname("prod-server")
+        
+        // Environment
+        .env("HOME", "/home/deploy")
+        .env("API_KEY", "secret123")
+        .env("DATABASE_URL", "postgres://localhost/db")
+        
+        // Working directory
+        .cwd("/home/deploy")
+        
+        // Resource limits
+        .limits(ExecutionLimits::new()
+            .max_commands(1000)
+            .max_loop_iterations(10000)
+            .max_function_depth(50)
+            .timeout(Duration::from_secs(60)))
+        
+        // Pre-populated files
+        .mount_readonly_text("/etc/version", "1.0.0")
+        .mount_text("/config/app.conf", "debug=true\n")
+        
+        .build();
+    
+    // Run script with configured environment
+    let result = bash.exec(r#"
+        echo "User: $(whoami)"
+        echo "Host: $(hostname)"
+        echo "CWD: $(pwd)"
+        echo "Home: $HOME"
+        echo "Version: $(cat /etc/version)"
+    "#).await?;
+    
+    println!("{}", result.stdout);
+    Ok(())
+}
+```
+
+Source: `crates/bashkit/src/lib.rs:1110-1133`

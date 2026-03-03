@@ -1,0 +1,354 @@
+---
+title: FileSystem Trait
+description: Virtual filesystem trait for custom storage backends
+---
+
+## Overview
+
+The `FileSystem` trait defines the interface for all filesystem implementations in BashKit. Implement this trait to create custom storage backends that integrate seamlessly with bash execution.
+
+## Trait Definition
+
+```rust
+#[async_trait]
+pub trait FileSystem: Send + Sync {
+    async fn read_file(&self, path: &Path) -> Result<Vec<u8>>;
+    async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()>;
+    async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()>;
+    async fn mkdir(&self, path: &Path, recursive: bool) -> Result<()>;
+    async fn remove(&self, path: &Path, recursive: bool) -> Result<()>;
+    async fn stat(&self, path: &Path) -> Result<Metadata>;
+    async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>>;
+    async fn exists(&self, path: &Path) -> Result<bool>;
+    async fn rename(&self, from: &Path, to: &Path) -> Result<()>;
+    async fn copy(&self, from: &Path, to: &Path) -> Result<()>;
+    async fn symlink(&self, target: &Path, link: &Path) -> Result<()>;
+    async fn read_link(&self, path: &Path) -> Result<PathBuf>;
+    async fn chmod(&self, path: &Path, mode: u32) -> Result<()>;
+    fn usage(&self) -> FsUsage;
+    fn limits(&self) -> FsLimits;
+}
+```
+
+## Built-in Implementations
+
+BashKit provides three filesystem implementations:
+
+- [InMemoryFs](/api/in-memory-fs) - HashMap-based in-memory storage (default)
+- [OverlayFs](/api/overlay-fs) - Copy-on-write layered filesystem
+- [MountableFs](/api/mountable-fs) - Multiple mount points
+
+## Core Methods
+
+### File Operations
+
+#### `read_file()`
+
+Read a file's contents as bytes.
+
+```rust
+async fn read_file(&self, path: &Path) -> Result<Vec<u8>>
+```
+
+<ParamField path="path" type="&Path" required>
+  File path to read
+</ParamField>
+
+<ResponseField name="content" type="Result<Vec<u8>>">
+  File contents as bytes
+</ResponseField>
+
+**Errors:**
+- `NotFound` - File doesn't exist
+- `IsADirectory` - Path is a directory
+
+#### `write_file()`
+
+Write contents to a file, creating or replacing it.
+
+```rust
+async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()>
+```
+
+<ParamField path="path" type="&Path" required>
+  File path to write
+</ParamField>
+
+<ParamField path="content" type="&[u8]" required>
+  File contents (binary safe)
+</ParamField>
+
+**Errors:**
+- `NotFound` - Parent directory doesn't exist
+- `IsADirectory` - Path is a directory
+
+#### `append_file()`
+
+Append contents to a file, creating if necessary.
+
+```rust
+async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()>
+```
+
+<ParamField path="path" type="&Path" required>
+  File path to append to
+</ParamField>
+
+<ParamField path="content" type="&[u8]" required>
+  Content to append
+</ParamField>
+
+### Directory Operations
+
+#### `mkdir()`
+
+Create a directory.
+
+```rust
+async fn mkdir(&self, path: &Path, recursive: bool) -> Result<()>
+```
+
+<ParamField path="path" type="&Path" required>
+  Directory path to create
+</ParamField>
+
+<ParamField path="recursive" type="bool" required>
+  If `true`, create parent directories (like `mkdir -p`)
+</ParamField>
+
+**Errors:**
+- `NotFound` - Parent doesn't exist (when `recursive=false`)
+- `AlreadyExists` - Path already exists
+
+#### `read_dir()`
+
+List directory contents.
+
+```rust
+async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>>
+```
+
+<ResponseField name="entries" type="Result<Vec<DirEntry>>">
+  List of directory entries with metadata
+</ResponseField>
+
+#### `remove()`
+
+Remove a file or directory.
+
+```rust
+async fn remove(&self, path: &Path, recursive: bool) -> Result<()>
+```
+
+<ParamField path="recursive" type="bool" required>
+  If `true`, remove directory contents (like `rm -r`)
+</ParamField>
+
+**Errors:**
+- `NotFound` - Path doesn't exist
+- `DirectoryNotEmpty` - Non-empty directory with `recursive=false`
+
+### Metadata
+
+#### `stat()`
+
+Get file or directory metadata.
+
+```rust
+async fn stat(&self, path: &Path) -> Result<Metadata>
+```
+
+<ResponseField name="metadata" type="Result<Metadata>">
+  File type, size, permissions, timestamps
+</ResponseField>
+
+```rust
+pub struct Metadata {
+    pub file_type: FileType,  // File, Directory, or Symlink
+    pub size: u64,
+    pub mode: u32,            // Unix permissions (e.g., 0o644)
+    pub modified: SystemTime,
+    pub created: SystemTime,
+}
+```
+
+#### `exists()`
+
+Check if a path exists.
+
+```rust
+async fn exists(&self, path: &Path) -> Result<bool>
+```
+
+### File Operations
+
+#### `rename()`
+
+Rename or move a file or directory.
+
+```rust
+async fn rename(&self, from: &Path, to: &Path) -> Result<()>
+```
+
+#### `copy()`
+
+Copy a file.
+
+```rust
+async fn copy(&self, from: &Path, to: &Path) -> Result<()>
+```
+
+**Note:** Cannot copy directories (use `cp -r` builtin instead).
+
+#### `chmod()`
+
+Change file permissions.
+
+```rust
+async fn chmod(&self, path: &Path, mode: u32) -> Result<()>
+```
+
+<ParamField path="mode" type="u32" required>
+  Unix permission mode (e.g., `0o644`, `0o755`)
+</ParamField>
+
+### Symlinks
+
+#### `symlink()`
+
+Create a symbolic link.
+
+```rust
+async fn symlink(&self, target: &Path, link: &Path) -> Result<()>
+```
+
+<ParamField path="target" type="&Path" required>
+  Path the symlink points to
+</ParamField>
+
+<ParamField path="link" type="&Path" required>
+  Path where symlink is created
+</ParamField>
+
+#### `read_link()`
+
+Read a symbolic link's target.
+
+```rust
+async fn read_link(&self, path: &Path) -> Result<PathBuf>
+```
+
+### Resource Tracking
+
+#### `usage()`
+
+Get current filesystem usage.
+
+```rust
+fn usage(&self) -> FsUsage
+```
+
+<ResponseField name="usage" type="FsUsage">
+  Current usage statistics (bytes, file count, directory count)
+</ResponseField>
+
+```rust
+pub struct FsUsage {
+    pub total_bytes: u64,
+    pub file_count: u64,
+    pub dir_count: u64,
+}
+```
+
+#### `limits()`
+
+Get filesystem limits.
+
+```rust
+fn limits(&self) -> FsLimits
+```
+
+<ResponseField name="limits" type="FsLimits">
+  Configured limits for this filesystem
+</ResponseField>
+
+## Using FileSystem
+
+### With Bash
+
+```rust
+use bashkit::{Bash, InMemoryFs};
+use std::sync::Arc;
+
+let fs = Arc::new(InMemoryFs::new());
+let mut bash = Bash::builder().fs(fs.clone()).build();
+
+// Bash commands use the filesystem
+bash.exec("echo hello > /tmp/test.txt").await?;
+
+// Direct access
+let content = fs.read_file(Path::new("/tmp/test.txt")).await?;
+assert_eq!(content, b"hello\n");
+```
+
+### Direct Usage
+
+```rust
+use bashkit::{FileSystem, InMemoryFs};
+use std::path::Path;
+
+let fs = InMemoryFs::new();
+
+// Create directory
+fs.mkdir(Path::new("/data"), false).await?;
+
+// Write file
+fs.write_file(Path::new("/data/file.txt"), b"content").await?;
+
+// Read file
+let content = fs.read_file(Path::new("/data/file.txt")).await?;
+assert_eq!(content, b"content");
+
+// Get metadata
+let stat = fs.stat(Path::new("/data/file.txt")).await?;
+assert_eq!(stat.size, 7);
+assert!(stat.file_type.is_file());
+```
+
+## Implementing Custom Filesystems
+
+See the examples directory:
+- `examples/custom_filesystem_impl.rs` - Complete custom implementation
+- `examples/custom_fs.rs` - Using different filesystem types
+
+### Simple Example
+
+```rust
+use bashkit::{async_trait, FileSystem, Metadata, DirEntry, Result};
+use std::path::Path;
+
+struct MyFileSystem {
+    // Your storage backend
+}
+
+#[async_trait]
+impl FileSystem for MyFileSystem {
+    async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        // Your implementation
+        todo!()
+    }
+    
+    async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+        // Your implementation
+        todo!()
+    }
+    
+    // ... implement remaining methods
+}
+```
+
+## See Also
+
+- [InMemoryFs](/api/in-memory-fs) - Default implementation
+- [OverlayFs](/api/overlay-fs) - Layered filesystem
+- [MountableFs](/api/mountable-fs) - Mount points

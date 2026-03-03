@@ -1,0 +1,213 @@
+---
+title: Basic Usage
+description: Core patterns for using BashKit
+---
+
+## Execution Methods
+
+BashKit provides both async and sync execution methods.
+
+<Tabs>
+  <Tab title="Async">
+    ```python
+    import asyncio
+    from bashkit import Bash
+
+    async def main():
+        bash = Bash()
+        result = await bash.execute("echo 'Hello!'")
+        print(result.stdout)
+
+    asyncio.run(main())
+    ```
+  </Tab>
+  
+  <Tab title="Sync">
+    ```python
+    from bashkit import Bash
+
+    bash = Bash()
+    result = bash.execute_sync("echo 'Hello!'")
+    print(result.stdout)
+    ```
+  </Tab>
+</Tabs>
+
+## Working with Results
+
+The `ExecResult` object contains execution details:
+
+```python
+result = bash.execute_sync("echo 'test'")
+
+print(result.stdout)      # Command output
+print(result.stderr)      # Error output
+print(result.exit_code)   # Exit code (0 = success)
+print(result.success)     # True if exit_code == 0
+print(result.error)       # Error message (if any)
+```
+
+### Converting to Dictionary
+
+```python
+result = bash.execute_sync("echo 'test'")
+data = result.to_dict()
+# {'stdout': 'test\n', 'stderr': '', 'exit_code': 0, 'error': None}
+```
+
+## Error Handling
+
+<Tabs>
+  <Tab title="Async">
+    ```python
+    result = await bash.execute("exit 1")
+    
+    if not result.success:
+        print(f"Command failed with exit code {result.exit_code}")
+        print(f"Error: {result.stderr}")
+    ```
+  </Tab>
+  
+  <Tab title="Sync">
+    ```python
+    result = bash.execute_sync("exit 1")
+    
+    if not result.success:
+        print(f"Command failed with exit code {result.exit_code}")
+        print(f"Error: {result.stderr}")
+    ```
+  </Tab>
+</Tabs>
+
+## Virtual Filesystem
+
+The virtual filesystem persists between calls:
+
+```python
+bash = Bash()
+
+# Create directory and file
+bash.execute_sync("mkdir -p /tmp/demo")
+bash.execute_sync("echo 'data' > /tmp/demo/file.txt")
+
+# File persists in subsequent calls
+result = bash.execute_sync("cat /tmp/demo/file.txt")
+print(result.stdout)  # data
+```
+
+### Resetting State
+
+Reset the interpreter to clear all state:
+
+```python
+bash.execute_sync("export MY_VAR='value'")
+bash.reset()  # Clears all variables and files
+
+result = bash.execute_sync("echo ${MY_VAR:-unset}")
+print(result.stdout)  # unset
+```
+
+## Variables and Environment
+
+Variables persist between execute calls:
+
+```python
+bash.execute_sync("MY_VAR='persistent'")
+result = bash.execute_sync("echo $MY_VAR")
+print(result.stdout)  # persistent
+```
+
+## Pipelines and Redirection
+
+Full bash syntax is supported:
+
+```python
+# Pipelines
+result = bash.execute_sync("echo -e 'line1\\nline2\\nline3' | grep line2")
+print(result.stdout)  # line2
+
+# Redirection
+bash.execute_sync("echo 'output' > /tmp/file.txt")
+result = bash.execute_sync("cat /tmp/file.txt")
+print(result.stdout)  # output
+
+# Here documents
+result = bash.execute_sync("""
+cat << 'EOF'
+Hello
+World
+EOF
+""")
+print(result.stdout)  # Hello\nWorld
+```
+
+## Loops and Control Flow
+
+```python
+result = bash.execute_sync("""
+    total=0
+    for i in {1..5}; do
+        total=$((total + i))
+    done
+    echo $total
+""")
+print(result.stdout)  # 15
+```
+
+## Working with JSON
+
+Use `jq` for JSON processing:
+
+```python
+bash.execute_sync("""
+cat > /tmp/data.json << 'EOF'
+[
+  {"name": "Alice", "role": "admin"},
+  {"name": "Bob", "role": "user"},
+  {"name": "Carol", "role": "admin"}
+]
+EOF
+""")
+
+result = bash.execute_sync(
+    "cat /tmp/data.json | jq '[.[] | select(.role == \"admin\")] | length'"
+)
+print(result.stdout)  # 2
+```
+
+## Text Processing
+
+```python
+# Using grep
+result = bash.execute_sync("""
+cat << 'EOF' | grep -c 'error'
+info: all good
+error: disk full
+info: recovered
+error: timeout
+EOF
+""")
+print(result.stdout)  # 2
+
+# Using sed
+result = bash.execute_sync("echo 'hello world' | sed 's/world/bash/'")
+print(result.stdout)  # hello bash
+
+# Using awk
+result = bash.execute_sync("echo -e '1 2\\n3 4' | awk '{print $1 + $2}'")
+print(result.stdout)  # 3\n7
+```
+
+## Resource Limits
+
+Protect against runaway scripts:
+
+```python
+bash = Bash(max_loop_iterations=50)
+
+# This will be stopped
+result = bash.execute_sync("i=0; while true; do i=$((i+1)); done")
+print(result.success)  # False (stopped by resource limit)
+```
+
+See [Configuration](/python/configuration) for more details on resource limits.

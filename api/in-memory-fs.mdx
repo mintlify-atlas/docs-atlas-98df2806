@@ -1,0 +1,400 @@
+---
+title: InMemoryFs
+description: HashMap-based in-memory virtual filesystem
+---
+
+## Overview
+
+`InMemoryFs` is the default filesystem used by BashKit. It stores all files and directories in memory using a `HashMap`, making it ideal for virtual execution where no real filesystem access is needed.
+
+## Features
+
+- **Thread-safe**: Uses `RwLock` for concurrent read/write access
+- **Binary-safe**: Fully supports binary data including null bytes
+- **Default directories**: Creates `/`, `/tmp`, `/home`, `/home/user`, `/dev`
+- **Special devices**: `/dev/null` discards writes and returns empty on read
+- **Resource limits**: Configurable limits prevent memory exhaustion
+
+## Creating an Instance
+
+### `new()`
+
+Create with default limits and directory structure.
+
+```rust
+use bashkit::InMemoryFs;
+
+let fs = InMemoryFs::new();
+```
+
+**Default Limits:**
+- Total filesystem: 100MB
+- Single file: 10MB
+- File count: 10,000
+
+**Default Directories:**
+```
+/
+├── tmp/
+├── home/
+│   └── user/
+└── dev/
+    ├── null  (special device)
+    └── fd/   (for process substitution)
+```
+
+### `with_limits()`
+
+Create with custom resource limits.
+
+```rust
+use bashkit::{InMemoryFs, FsLimits};
+
+let fs = InMemoryFs::with_limits(
+    FsLimits::new()
+        .max_total_bytes(50_000_000)  // 50MB
+        .max_file_size(5_000_000)     // 5MB per file
+        .max_file_count(1_000)
+);
+```
+
+## Usage Examples
+
+### Basic File Operations
+
+```rust
+use bashkit::{FileSystem, InMemoryFs};
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let fs = InMemoryFs::new();
+    
+    // Write file
+    fs.write_file(Path::new("/tmp/test.txt"), b"hello world").await?;
+    
+    // Read file
+    let content = fs.read_file(Path::new("/tmp/test.txt")).await?;
+    assert_eq!(content, b"hello world");
+    
+    // Append
+    fs.append_file(Path::new("/tmp/test.txt"), b" more").await?;
+    
+    // Check existence
+    assert!(fs.exists(Path::new("/tmp/test.txt")).await?);
+    
+    Ok(())
+}
+```
+
+### Directory Operations
+
+```rust
+use bashkit::{FileSystem, InMemoryFs};
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let fs = InMemoryFs::new();
+    
+    // Create directory
+    fs.mkdir(Path::new("/data"), false).await?;
+    
+    // Create nested directories
+    fs.mkdir(Path::new("/data/nested/deep"), true).await?;
+    
+    // List directory
+    let entries = fs.read_dir(Path::new("/data")).await?;
+    for entry in entries {
+        println!("{}: {} bytes", entry.name, entry.metadata.size);
+    }
+    
+    Ok(())
+}
+```
+
+### Binary Data
+
+```rust
+use bashkit::{FileSystem, InMemoryFs};
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let fs = InMemoryFs::new();
+    
+    // Write binary with null bytes
+    let data = vec![0x89, 0x50, 0x4E, 0x47, 0x00, 0xFF];
+    fs.write_file(Path::new("/tmp/binary.bin"), &data).await?;
+    
+    // Read it back unchanged
+    let read = fs.read_file(Path::new("/tmp/binary.bin")).await?;
+    assert_eq!(read, data);
+    
+    Ok(())
+}
+```
+
+### With Bash
+
+```rust
+use bashkit::{Bash, InMemoryFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let fs = Arc::new(InMemoryFs::new());
+    let mut bash = Bash::builder().fs(fs.clone()).build();
+    
+    // Pre-populate files
+    fs.mkdir(Path::new("/config"), false).await?;
+    fs.write_file(Path::new("/config/app.conf"), b"debug=true").await?;
+    
+    // Bash can read pre-populated files
+    let result = bash.exec("cat /config/app.conf").await?;
+    assert_eq!(result.stdout, "debug=true");
+    
+    // Bash creates files
+    bash.exec("echo 'from bash' > /tmp/output.txt").await?;
+    
+    // Read directly
+    let content = fs.read_file(Path::new("/tmp/output.txt")).await?;
+    assert_eq!(content, b"from bash\n");
+    
+    Ok(())
+}
+```
+
+## Resource Limits
+
+### Configuring Limits
+
+```rust
+use bashkit::{InMemoryFs, FsLimits};
+
+let limits = FsLimits::new()
+    .max_total_bytes(1_000_000)   // 1MB total
+    .max_file_size(100_000)       // 100KB per file
+    .max_file_count(100);         // 100 files max
+
+let fs = InMemoryFs::with_limits(limits);
+```
+
+### Limit Violations
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, FsLimits};
+use std::path::Path;
+
+#[tokio::main]
+async fn main() {
+    let limits = FsLimits::new().max_file_size(100);
+    let fs = InMemoryFs::with_limits(limits);
+    
+    // This works - under limit
+    fs.write_file(Path::new("/tmp/small.txt"), &[0u8; 50]).await.unwrap();
+    
+    // This fails - over limit
+    let result = fs.write_file(Path::new("/tmp/large.txt"), &[0u8; 200]).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("file too large"));
+}
+```
+
+### Usage Tracking
+
+```rust
+use bashkit::{FileSystem, InMemoryFs};
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let fs = InMemoryFs::new();
+    
+    fs.write_file(Path::new("/tmp/file1.txt"), b"hello").await?;
+    fs.write_file(Path::new("/tmp/file2.txt"), b"world").await?;
+    
+    let usage = fs.usage();
+    println!("Total bytes: {}", usage.total_bytes);  // 10 bytes
+    println!("File count: {}", usage.file_count);    // 3 (/dev/null + 2)
+    
+    Ok(())
+}
+```
+
+## State Management
+
+### `snapshot()`
+
+Capture the current filesystem state.
+
+```rust
+pub fn snapshot(&self) -> VfsSnapshot
+```
+
+<ResponseField name="snapshot" type="VfsSnapshot">
+  Serializable snapshot of all files, directories, and symlinks
+</ResponseField>
+
+**Example:**
+
+```rust
+use bashkit::{FileSystem, InMemoryFs};
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let fs = InMemoryFs::new();
+    fs.write_file(Path::new("/tmp/test.txt"), b"hello").await?;
+    
+    // Take snapshot
+    let snapshot = fs.snapshot();
+    
+    // Serialize to JSON
+    let json = serde_json::to_string(&snapshot).unwrap();
+    
+    // Deserialize and restore
+    let restored: bashkit::VfsSnapshot = serde_json::from_str(&json).unwrap();
+    let fs2 = InMemoryFs::new();
+    fs2.restore(&restored);
+    
+    let content = fs2.read_file(Path::new("/tmp/test.txt")).await?;
+    assert_eq!(content, b"hello");
+    
+    Ok(())
+}
+```
+
+### `restore()`
+
+Restore from a previously captured snapshot.
+
+```rust
+pub fn restore(&self, snapshot: &VfsSnapshot)
+```
+
+<ParamField path="snapshot" type="&VfsSnapshot" required>
+  Previously captured snapshot
+</ParamField>
+
+**Example:**
+
+```rust
+let fs = InMemoryFs::new();
+fs.write_file(Path::new("/tmp/data.txt"), b"original").await?;
+
+let snapshot = fs.snapshot();
+
+// Make changes
+fs.write_file(Path::new("/tmp/data.txt"), b"changed").await?;
+fs.write_file(Path::new("/tmp/new.txt"), b"new file").await?;
+
+// Restore
+fs.restore(&snapshot);
+
+// Original state is back
+let content = fs.read_file(Path::new("/tmp/data.txt")).await?;
+assert_eq!(content, b"original");
+assert!(!fs.exists(Path::new("/tmp/new.txt")).await?);
+```
+
+### `add_file()`
+
+Synchronous method to add files during construction.
+
+```rust
+pub fn add_file(&self, path: impl AsRef<Path>, content: impl AsRef<[u8]>, mode: u32)
+```
+
+<ParamField path="path" type="impl AsRef<Path>" required>
+  Absolute path for the file
+</ParamField>
+
+<ParamField path="content" type="impl AsRef<[u8]>" required>
+  File content
+</ParamField>
+
+<ParamField path="mode" type="u32" required>
+  Unix permissions (e.g., `0o644`, `0o444`)
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::InMemoryFs;
+
+let fs = InMemoryFs::new();
+
+// Add writable file
+fs.add_file("/config/app.conf", "debug=true\n", 0o644);
+
+// Add readonly file
+fs.add_file("/etc/version", "1.0.0", 0o444);
+
+// Parent directories created automatically
+fs.add_file("/a/b/c/deep.txt", "content", 0o644);
+```
+
+**Note:** This method is primarily used by `BashBuilder` for file mounting. For runtime operations, use the async `write_file()` method.
+
+## Special Devices
+
+### /dev/null
+
+```rust
+use bashkit::{FileSystem, InMemoryFs};
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let fs = InMemoryFs::new();
+    
+    // Writing to /dev/null succeeds but data is discarded
+    fs.write_file(Path::new("/dev/null"), b"data").await?;
+    
+    // Reading returns empty
+    let content = fs.read_file(Path::new("/dev/null")).await?;
+    assert!(content.is_empty());
+    
+    Ok(())
+}
+```
+
+## Thread Safety
+
+`InMemoryFs` uses `RwLock` for thread-safe concurrent access:
+
+```rust
+use bashkit::{FileSystem, InMemoryFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let fs = Arc::new(InMemoryFs::new());
+    
+    // Spawn concurrent tasks
+    let fs1 = fs.clone();
+    let task1 = tokio::spawn(async move {
+        fs1.write_file(Path::new("/tmp/file1.txt"), b"data1").await
+    });
+    
+    let fs2 = fs.clone();
+    let task2 = tokio::spawn(async move {
+        fs2.write_file(Path::new("/tmp/file2.txt"), b"data2").await
+    });
+    
+    task1.await??;
+    task2.await??;
+    
+    Ok(())
+}
+```
+
+## See Also
+
+- [FileSystem](/api/filesystem) - Trait specification
+- [OverlayFs](/api/overlay-fs) - Copy-on-write layered filesystem
+- [MountableFs](/api/mountable-fs) - Multiple mount points
+- [FsLimits](https://docs.rs/bashkit/latest/bashkit/struct.FsLimits.html) - Resource limit configuration

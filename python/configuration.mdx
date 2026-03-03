@@ -1,0 +1,204 @@
+---
+title: Configuration
+description: Configure the Bash interpreter
+---
+
+## Constructor Parameters
+
+Both `Bash` and `BashTool` accept the same configuration parameters:
+
+```python
+from bashkit import Bash
+
+bash = Bash(
+    username="agent",
+    hostname="sandbox",
+    max_commands=1000,
+    max_loop_iterations=10000
+)
+```
+
+## Parameters
+
+<ParamField path="username" type="str" optional>
+  Custom username for the sandbox environment. Affects the output of `whoami`.
+  
+  **Default:** `"user"`
+  
+  ```python
+  bash = Bash(username="agent")
+  result = bash.execute_sync("whoami")
+  print(result.stdout)  # agent
+  ```
+</ParamField>
+
+<ParamField path="hostname" type="str" optional>
+  Custom hostname for the sandbox environment. Affects the output of `hostname`.
+  
+  **Default:** `"sandbox"`
+  
+  ```python
+  bash = Bash(hostname="dev-box")
+  result = bash.execute_sync("hostname")
+  print(result.stdout)  # dev-box
+  ```
+</ParamField>
+
+<ParamField path="max_commands" type="int" optional>
+  Maximum number of commands that can be executed in a single `execute()` call. Protects against scripts that spawn excessive processes.
+  
+  **Default:** unlimited
+  
+  ```python
+  bash = Bash(max_commands=100)
+  ```
+</ParamField>
+
+<ParamField path="max_loop_iterations" type="int" optional>
+  Maximum number of loop iterations allowed in a single `execute()` call. Protects against infinite loops.
+  
+  **Default:** unlimited
+  
+  ```python
+  bash = Bash(max_loop_iterations=10000)
+  
+  # This will be stopped
+  result = bash.execute_sync("while true; do echo x; done")
+  print(result.success)  # False
+  ```
+</ParamField>
+
+## Examples
+
+### Custom Identity
+
+```python
+from bashkit import Bash
+
+bash = Bash(
+    username="agent",
+    hostname="sandbox"
+)
+
+result = bash.execute_sync("whoami")
+print(result.stdout)  # agent
+
+result = bash.execute_sync("hostname")
+print(result.stdout)  # sandbox
+```
+
+### Resource Limits
+
+Protect against runaway scripts:
+
+```python
+from bashkit import Bash
+
+bash = Bash(
+    max_commands=1000,
+    max_loop_iterations=10000
+)
+
+# This will be stopped after 10,000 iterations
+result = bash.execute_sync("""
+    i=0
+    while true; do
+        i=$((i+1))
+    done
+    echo $i
+""")
+
+if not result.success:
+    print("Script stopped by resource limit")
+```
+
+### BashTool Configuration
+
+`BashTool` accepts the same parameters:
+
+```python
+from bashkit import BashTool
+
+tool = BashTool(
+    username="ai-agent",
+    hostname="llm-sandbox",
+    max_commands=500,
+    max_loop_iterations=5000
+)
+
+result = tool.execute_sync("echo 'configured'")
+```
+
+## Resetting State
+
+The `reset()` method clears all interpreter state while preserving security configuration:
+
+```python
+bash = Bash(
+    username="agent",
+    max_commands=1000
+)
+
+# Create files and variables
+bash.execute_sync("export MY_VAR='value'")
+bash.execute_sync("echo 'data' > /tmp/file.txt")
+
+# Reset clears everything but preserves config
+bash.reset()
+
+result = bash.execute_sync("echo ${MY_VAR:-unset}")
+print(result.stdout)  # unset
+
+result = bash.execute_sync("cat /tmp/file.txt 2>&1")
+print(result.success)  # False (file doesn't exist)
+
+# But security config is preserved
+result = bash.execute_sync("whoami")
+print(result.stdout)  # agent (still configured)
+```
+
+## Best Practices
+
+### Always Set Resource Limits
+
+When integrating with LLMs, always configure resource limits:
+
+```python
+bash = Bash(
+    max_commands=1000,
+    max_loop_iterations=10000
+)
+```
+
+This protects against:
+- Infinite loops
+- Fork bombs
+- Excessive resource consumption
+
+### Use Descriptive Identity
+
+Set meaningful `username` and `hostname` for clarity in logs:
+
+```python
+bash = Bash(
+    username="github-action",
+    hostname="ci-runner"
+)
+```
+
+### Reset Between Sessions
+
+When using the same `Bash` instance across multiple independent tasks:
+
+```python
+bash = Bash()
+
+# Task 1
+bash.execute_sync("task1 commands")
+
+# Clear state before task 2
+bash.reset()
+
+# Task 2
+bash.execute_sync("task2 commands")
+```

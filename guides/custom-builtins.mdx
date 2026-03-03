@@ -1,0 +1,427 @@
+---
+title: Custom Builtin Commands
+description: Extend BashKit with domain-specific commands by implementing the Builtin trait
+---
+
+Custom builtins extend BashKit with domain-specific commands that can be invoked from bash scripts. They have full access to the execution context including arguments, environment, shell variables, and the virtual filesystem.
+
+## Quick Start
+
+<Steps>
+  <Step title="Implement the Builtin trait">
+    Create a struct and implement the async `Builtin` trait:
+    
+    ```rust
+    use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, async_trait};
+    
+    struct Greet;
+    
+    #[async_trait]
+    impl Builtin for Greet {
+        async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+            let name = ctx.args.first().map(|s| s.as_str()).unwrap_or("World");
+            Ok(ExecResult::ok(format!("Hello, {}!\n", name)))
+        }
+    }
+    ```
+    
+    Source: `crates/bashkit/docs/custom_builtins.md:15-26`
+  </Step>
+  
+  <Step title="Register with BashBuilder">
+    Register your builtin when building the Bash instance:
+    
+    ```rust
+    let mut bash = Bash::builder()
+        .builtin("greet", Box::new(Greet))
+        .build();
+    ```
+    
+    Source: `crates/bashkit/docs/custom_builtins.md:30-33`
+  </Step>
+  
+  <Step title="Use in scripts">
+    Your custom builtin is now available in bash scripts:
+    
+    ```rust
+    let result = bash.exec("greet Alice").await?;
+    assert_eq!(result.stdout, "Hello, Alice!\n");
+    ```
+    
+    Source: `crates/bashkit/docs/custom_builtins.md:34-36`
+  </Step>
+</Steps>
+
+## The Builtin Trait
+
+All custom builtins must implement this trait:
+
+```rust
+#[async_trait]
+pub trait Builtin: Send + Sync {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> Result<ExecResult>;
+}
+```
+
+Source: `crates/bashkit/docs/custom_builtins.md:44-48`
+
+The trait requires:
+- `Send + Sync` for thread safety in async contexts
+- `async_trait` macro for async method support
+- Returns `Result<ExecResult>` with stdout, stderr, and exit code
+
+## Execution Context
+
+The `BuiltinContext` provides access to the execution environment:
+
+<ParamField path="args" type="&[String]">
+  Command arguments (not including the command name).
+  
+  ```rust
+  // For "mycommand arg1 arg2", ctx.args = ["arg1", "arg2"]
+  let first_arg = ctx.args.first().map(|s| s.as_str()).unwrap_or("default");
+  ```
+  
+  Source: `crates/bashkit/docs/custom_builtins.md:80-87`
+</ParamField>
+
+<ParamField path="env" type="&HashMap<String, String>">
+  Read-only access to environment variables.
+  
+  ```rust
+  let home = ctx.env.get("HOME").map(|s| s.as_str()).unwrap_or("/");
+  ```
+  
+  Source: `crates/bashkit/docs/custom_builtins.md:89-95`
+</ParamField>
+
+<ParamField path="variables" type="&mut HashMap<String, String>">
+  Mutable access to shell variables.
+  
+  ```rust
+  ctx.variables.insert("RESULT".to_string(), "computed_value".to_string());
+  ```
+  
+  Source: `crates/bashkit/docs/custom_builtins.md:97-103`
+</ParamField>
+
+<ParamField path="cwd" type="&mut PathBuf">
+  Current working directory (mutable).
+  
+  Source: `crates/bashkit/docs/custom_builtins.md:69`
+</ParamField>
+
+<ParamField path="fs" type="Arc<dyn FileSystem>">
+  Virtual filesystem for file operations.
+  
+  ```rust
+  // Read a file
+  let content = ctx.fs.read_file(Path::new("/data/input.txt")).await?;
+  
+  // Write a file
+  ctx.fs.write_file(Path::new("/output/result.txt"), b"output").await?;
+  
+  // Check existence
+  if ctx.fs.exists(Path::new("/config")).await? {
+      // ...
+  }
+  ```
+  
+  Source: `crates/bashkit/docs/custom_builtins.md:105-120`
+</ParamField>
+
+<ParamField path="stdin" type="Option<&str>">
+  Standard input from pipeline (if invoked in a pipeline).
+  
+  ```rust
+  // echo "hello" | mycommand
+  let input = ctx.stdin.unwrap_or("");
+  let processed = input.to_uppercase();
+  ```
+  
+  Source: `crates/bashkit/docs/custom_builtins.md:122-131`
+</ParamField>
+
+Source: `crates/bashkit/docs/custom_builtins.md:56-78`
+
+## Return Values
+
+Builtins return `Result<ExecResult>` with three fields:
+
+<ParamField path="stdout" type="String">
+  Standard output to be displayed or piped to next command.
+</ParamField>
+
+<ParamField path="stderr" type="String">
+  Standard error for error messages and warnings.
+</ParamField>
+
+<ParamField path="exit_code" type="i32">
+  Exit code (0 for success, non-zero for errors).
+</ParamField>
+
+Source: `crates/bashkit/docs/custom_builtins.md:136-143`
+
+### Helper Constructors
+
+```rust
+// Success with output
+Ok(ExecResult::ok("output\n".to_string()))
+
+// Error with message and exit code
+Ok(ExecResult::err("error message\n".to_string(), 1))
+```
+
+Source: `crates/bashkit/docs/custom_builtins.md:147-153`
+
+## Examples
+
+### Simple Greeting Command
+
+```rust
+struct Greet {
+    default_name: String,
+}
+
+#[async_trait]
+impl Builtin for Greet {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        let name = ctx.args.first()
+            .map(|s| s.as_str())
+            .unwrap_or(&self.default_name);
+        Ok(ExecResult::ok(format!("Hello, {}!\n", name)))
+    }
+}
+
+let bash = Bash::builder()
+    .builtin("greet", Box::new(Greet { default_name: "World".into() }))
+    .build();
+```
+
+Source: `crates/bashkit/examples/custom_builtins.rs:14-29`
+
+### Pipeline Transform Command
+
+Transform stdin to uppercase:
+
+```rust
+struct Upper;
+
+#[async_trait]
+impl Builtin for Upper {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        let input = ctx.stdin.unwrap_or("");
+        Ok(ExecResult::ok(input.to_uppercase()))
+    }
+}
+
+// Usage in pipeline
+bash.exec("echo 'hello world' | upper").await?;
+// Output: "HELLO WORLD\n"
+```
+
+Source: `crates/bashkit/examples/custom_builtins.rs:31-40`
+
+### Stateful Counter
+
+Builtin with shared state using atomic operations:
+
+```rust
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+struct Counter {
+    count: Arc<AtomicU64>,
+}
+
+#[async_trait]
+impl Builtin for Counter {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        let increment: u64 = ctx.args.first()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+        let new_value = self.count.fetch_add(increment, Ordering::SeqCst) + increment;
+        Ok(ExecResult::ok(format!("{}\n", new_value)))
+    }
+}
+
+// Usage
+let counter = Arc::new(AtomicU64::new(0));
+let bash = Bash::builder()
+    .builtin("counter", Box::new(Counter { count: counter }))
+    .build();
+
+bash.exec("counter").await?;     // Output: "1\n"
+bash.exec("counter").await?;     // Output: "2\n"
+bash.exec("counter 10").await?;  // Output: "12\n"
+```
+
+Source: `crates/bashkit/examples/custom_builtins.rs:42-54`
+
+### Key-Value Store
+
+Simulate a database with get/set/list operations:
+
+```rust
+use std::collections::HashMap;
+use tokio::sync::RwLock;
+
+struct KvStore {
+    data: Arc<RwLock<HashMap<String, String>>>,
+}
+
+#[async_trait]
+impl Builtin for KvStore {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        let cmd = ctx.args.first().map(|s| s.as_str()).unwrap_or("help");
+        
+        match cmd {
+            "get" => {
+                let key = ctx.args.get(1).map(|s| s.as_str()).unwrap_or("");
+                let data = self.data.read().await;
+                match data.get(key) {
+                    Some(value) => Ok(ExecResult::ok(format!("{}\n", value))),
+                    None => Ok(ExecResult::err(format!("key not found: {}\n", key), 1)),
+                }
+            }
+            "set" => {
+                let key = ctx.args.get(1).cloned().unwrap_or_default();
+                let value = ctx.args.get(2).cloned().unwrap_or_default();
+                let mut data = self.data.write().await;
+                data.insert(key, value);
+                Ok(ExecResult::ok(String::new()))
+            }
+            "list" => {
+                let data = self.data.read().await;
+                let mut output = String::new();
+                for (k, v) in data.iter() {
+                    output.push_str(&format!("{}={}\n", k, v));
+                }
+                Ok(ExecResult::ok(output))
+            }
+            _ => Ok(ExecResult::err(
+                "Usage: kv <get|set|list> [key] [value]\n".to_string(),
+                1,
+            )),
+        }
+    }
+}
+
+// Usage
+bash.exec("kv set name Alice").await?;
+bash.exec("kv set email alice@example.com").await?;
+let result = bash.exec("kv get name").await?;
+assert_eq!(result.stdout, "Alice\n");
+```
+
+Source: `crates/bashkit/examples/custom_builtins.rs:73-112`
+
+### Environment Reader
+
+```rust
+struct EnvReader;
+
+#[async_trait]
+impl Builtin for EnvReader {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        let var_name = ctx.args.first().map(|s| s.as_str()).unwrap_or("HOME");
+        let value = ctx.env.get(var_name)
+            .map(|s| s.as_str())
+            .unwrap_or("(not set)");
+        Ok(ExecResult::ok(format!("{}={}\n", var_name, value)))
+    }
+}
+
+// Usage
+let bash = Bash::builder()
+    .env("API_KEY", "secret-123")
+    .builtin("getenv", Box::new(EnvReader))
+    .build();
+
+let result = bash.exec("getenv API_KEY").await?;
+assert_eq!(result.stdout, "API_KEY=secret-123\n");
+```
+
+Source: `crates/bashkit/examples/custom_builtins.rs:56-70`
+
+## Best Practices
+
+1. **Return proper exit codes**: Use 0 for success, non-zero for errors
+2. **Include newlines**: Output should end with `\n` for proper formatting
+3. **Handle missing args gracefully**: Provide usage messages for incorrect invocations
+4. **Use stderr for errors**: Write error messages to `ExecResult::stderr`
+5. **Keep builtins stateless when possible**: Use `Arc` for shared state that needs mutation
+
+Source: `crates/bashkit/docs/custom_builtins.md:244-249`
+
+## Thread Safety
+
+The `Builtin` trait requires `Send + Sync`. For builtins with mutable state, use appropriate synchronization:
+
+```rust
+struct Counter {
+    count: Arc<std::sync::atomic::AtomicU64>,
+}
+
+#[async_trait]
+impl Builtin for Counter {
+    async fn execute(&self, _ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        let n = self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(ExecResult::ok(format!("{}\n", n)))
+    }
+}
+```
+
+Source: `crates/bashkit/docs/custom_builtins.md:251-268`
+
+## Overriding Default Builtins
+
+Custom builtins can override default builtins by using the same name:
+
+```rust
+struct SecureEcho;
+
+#[async_trait]
+impl Builtin for SecureEcho {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        // Redact sensitive patterns
+        let output: Vec<_> = ctx.args.iter()
+            .map(|s| if s.contains("password") { "[REDACTED]" } else { s.as_str() })
+            .collect();
+        Ok(ExecResult::ok(format!("{}\n", output.join(" "))))
+    }
+}
+
+let bash = Bash::builder()
+    .builtin("echo", Box::new(SecureEcho))  // Overrides default echo
+    .build();
+```
+
+Source: `crates/bashkit/docs/custom_builtins.md:220-241`
+
+## Integration with Scripts
+
+Custom builtins work seamlessly with all bash features:
+
+```bash
+# Variables work
+NAME="Alice"
+greet $NAME
+
+# Pipelines work
+echo "hello world" | upper | head -1
+
+# Conditionals work
+if mycheck; then
+    echo "passed"
+else
+    echo "failed"
+fi
+
+# Loops work
+for item in a b c; do
+    process $item
+done
+```
+
+Source: `crates/bashkit/docs/custom_builtins.md:270-294`

@@ -1,0 +1,340 @@
+---
+title: ExecResult
+description: Result of bash script execution
+---
+
+## Overview
+
+`ExecResult` contains the output and exit status from executing a bash script. It's the return value from `Bash::exec()` and `Bash::exec_streaming()`.
+
+## Structure
+
+```rust
+pub struct ExecResult {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+```
+
+## Fields
+
+<ResponseField name="stdout" type="String">
+  Standard output captured from the script. Includes all text written to stdout via commands like `echo`, `cat`, `printf`, etc.
+</ResponseField>
+
+<ResponseField name="stderr" type="String">
+  Standard error output captured from the script. Includes error messages and stderr redirects (`2>&1`, `>&2`).
+</ResponseField>
+
+<ResponseField name="exit_code" type="i32">
+  Exit status of the last command executed:
+  - `0` = Success
+  - `1-125` = Command-specific error
+  - `126` = Command not executable
+  - `127` = Command not found
+  - `130` = Script terminated by Ctrl+C (SIGINT)
+</ResponseField>
+
+## Creating Results
+
+### `ok()`
+
+Create a successful result with stdout.
+
+```rust
+pub fn ok(stdout: impl Into<String>) -> Self
+```
+
+<ParamField path="stdout" type="impl Into<String>" required>
+  Standard output content
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::ExecResult;
+
+let result = ExecResult::ok("Hello, World!\n");
+assert_eq!(result.exit_code, 0);
+assert_eq!(result.stdout, "Hello, World!\n");
+assert!(result.stderr.is_empty());
+```
+
+### `error()`
+
+Create an error result with stderr.
+
+```rust
+pub fn error(stderr: impl Into<String>, exit_code: i32) -> Self
+```
+
+<ParamField path="stderr" type="impl Into<String>" required>
+  Error message for stderr
+</ParamField>
+
+<ParamField path="exit_code" type="i32" required>
+  Exit code (typically non-zero)
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::ExecResult;
+
+let result = ExecResult::error("command not found\n", 127);
+assert_eq!(result.exit_code, 127);
+assert!(result.stdout.is_empty());
+assert_eq!(result.stderr, "command not found\n");
+```
+
+## Exit Code Conventions
+
+BashKit follows standard bash exit code conventions:
+
+| Code | Meaning | Example |
+|------|---------|--------|
+| 0 | Success | `echo hello` |
+| 1 | General error | `false`, `[ 1 -eq 2 ]` |
+| 2 | Misuse of builtin | `cd /nonexistent` |
+| 126 | Command not executable | Permission denied |
+| 127 | Command not found | `nonexistent_command` |
+| 128+N | Fatal signal N | 130 = SIGINT (Ctrl+C) |
+
+## Usage Examples
+
+### Basic Execution
+
+```rust
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::new();
+    
+    let result = bash.exec("echo 'Hello, World!'").await?;
+    
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, "Hello, World!\n");
+    assert!(result.stderr.is_empty());
+    
+    Ok(())
+}
+```
+
+### Handling Errors
+
+```rust
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::new();
+    
+    let result = bash.exec("nonexistent_command").await?;
+    
+    assert_ne!(result.exit_code, 0);
+    assert!(result.stderr.contains("command not found"));
+    
+    Ok(())
+}
+```
+
+### Checking Success
+
+```rust
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::new();
+    
+    let result = bash.exec("[ -f /tmp/file.txt ]").await?;
+    
+    if result.exit_code == 0 {
+        println!("File exists");
+    } else {
+        println!("File does not exist");
+    }
+    
+    Ok(())
+}
+```
+
+### Pipeline Output
+
+```rust
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::new();
+    
+    let result = bash.exec("echo -e 'apple\\nbanana\\ncherry' | grep a").await?;
+    
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, "apple\nbanana\n");
+    
+    Ok(())
+}
+```
+
+### Stderr Capture
+
+```rust
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::new();
+    
+    // Redirect stdout to stderr
+    let result = bash.exec("echo error message >&2").await?;
+    
+    assert!(result.stdout.is_empty());
+    assert_eq!(result.stderr, "error message\n");
+    
+    Ok(())
+}
+```
+
+### Combined Output
+
+```rust
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::new();
+    
+    // Combine stderr into stdout
+    let result = bash.exec("echo out; echo err >&2; echo combined 2>&1").await?;
+    
+    // stdout contains regular output and combined output
+    // stderr contains only the standalone stderr
+    assert!(result.stdout.contains("out"));
+    assert!(result.stderr.contains("err"));
+    
+    Ok(())
+}
+```
+
+### Arithmetic Results
+
+```rust
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::new();
+    
+    let result = bash.exec("echo $((2 + 2 * 3))").await?;
+    
+    assert_eq!(result.stdout.trim(), "8");
+    
+    Ok(())
+}
+```
+
+### File Operations
+
+```rust
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::new();
+    
+    // Create file and read it back
+    bash.exec("echo 'Hello' > /tmp/test.txt").await?;
+    bash.exec("echo 'World' >> /tmp/test.txt").await?;
+    
+    let result = bash.exec("cat /tmp/test.txt").await?;
+    assert_eq!(result.stdout, "Hello\nWorld\n");
+    
+    Ok(())
+}
+```
+
+## Conversion
+
+### From ExecResult to ToolResponse
+
+`ExecResult` can be converted to `ToolResponse` for LLM tool integration:
+
+```rust
+use bashkit::{ExecResult, ToolResponse};
+
+let exec_result = ExecResult::ok("output\n");
+let tool_response: ToolResponse = exec_result.into();
+
+assert_eq!(tool_response.stdout, "output\n");
+assert_eq!(tool_response.exit_code, 0);
+assert!(tool_response.error.is_none());
+```
+
+See [ToolResponse](/api/tool-response) for details.
+
+## Binary Output Handling
+
+While `ExecResult` stores output as `String`, the underlying filesystem supports binary data. For binary operations, access the filesystem directly:
+
+```rust
+use bashkit::{Bash, FileSystem};
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::new();
+    
+    // Create binary file via builtin
+    bash.exec("echo -e '\\x89\\x50\\x4E\\x47' > /tmp/data.bin").await?;
+    
+    // Read as binary
+    let fs = bash.fs();
+    let binary = fs.read_file(Path::new("/tmp/data.bin")).await?;
+    
+    // binary is Vec<u8>
+    assert_eq!(binary[0], 0x89);
+    
+    Ok(())
+}
+```
+
+## Streaming Output
+
+For long-running scripts, use `exec_streaming()` to receive incremental output:
+
+```rust
+use bashkit::Bash;
+use std::sync::{Arc, Mutex};
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let output_cb = output.clone();
+    
+    let mut bash = Bash::new();
+    let result = bash.exec_streaming(
+        "for i in {1..5}; do echo $i; sleep 0.1; done",
+        Box::new(move |stdout, _stderr| {
+            output_cb.lock().unwrap().push(stdout.to_string());
+        }),
+    ).await?;
+    
+    // result contains full output
+    assert_eq!(result.stdout, "1\n2\n3\n4\n5\n");
+    
+    // callback received incremental chunks
+    let chunks = output.lock().unwrap();
+    assert_eq!(chunks.len(), 5);
+    
+    Ok(())
+}
+```
+
+## See Also
+
+- [Bash](/api/bash) - Script execution methods
+- [ToolResponse](/api/tool-response) - LLM tool response format
+- [FileSystem](/api/filesystem) - Direct filesystem access for binary data

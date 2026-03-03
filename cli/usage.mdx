@@ -1,0 +1,107 @@
+---
+title: CLI Usage
+description: Using the bashkit command line interface
+---
+
+The bashkit CLI provides a virtual bash interpreter for executing commands and scripts in an isolated environment.
+
+## Execute Commands
+
+Run a single command using the `-c` flag:
+
+```bash
+bashkit -c 'echo hello'
+```
+
+```
+hello
+```
+
+Multiple commands can be chained:
+
+```bash
+bashkit -c 'echo "Setting up..." && mkdir -p test && cd test && pwd'
+```
+
+```
+Setting up...
+/test
+```
+
+## Execute Scripts
+
+Run a bash script file by passing the path as an argument:
+
+```bash
+bashkit script.sh
+```
+
+Example `script.sh`:
+
+```bash
+#!/bin/bash
+echo "Starting script..."
+for i in {1..3}; do
+  echo "Iteration $i"
+done
+echo "Done!"
+```
+
+Output:
+
+```
+Starting script...
+Iteration 1
+Iteration 2
+Iteration 3
+Done!
+```
+
+## Script Arguments
+
+Pass arguments to scripts using trailing arguments:
+
+```bash
+bashkit script.sh arg1 arg2 arg3
+```
+
+These arguments are available in the script as `$1`, `$2`, `$3`, etc.
+
+## Exit Codes
+
+Bashkit preserves the exit code of the executed command or script:
+
+```bash
+bashkit -c 'exit 42'
+echo $?
+```
+
+```
+42
+```
+
+## Standard Error
+
+Stderr output is displayed separately:
+
+```bash
+bashkit -c 'echo "stdout message" && echo "stderr message" >&2'
+```
+
+```
+stdout message
+stderr message
+```
+
+## Interactive Mode
+
+Interactive REPL mode is planned but not yet implemented:
+
+```bash
+bashkit
+```
+
+```
+bashkit: interactive mode not yet implemented
+Usage: bashkit -c 'command' or bashkit script.sh or bashkit mcp
+```

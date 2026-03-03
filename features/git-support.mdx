@@ -1,0 +1,244 @@
+---
+title: Git Support
+description: Virtual git operations in BashKit's sandboxed environment
+---
+
+<Warning>
+Git support is experimental. Remote operations (clone, push, pull, fetch) validate URLs against an allowlist but do not perform actual network operations in virtual mode.
+</Warning>
+
+BashKit provides virtual git operations via the `git` feature flag. All git operations work on the virtual filesystem only, with no access to the host's git configuration or repositories.
+
+## Quick Start
+
+Enable the `git` feature and configure via builder:
+
+```rust
+use bashkit::{Bash, GitConfig};
+
+let bash = Bash::builder()
+    .git(GitConfig::new()
+        .author("Deploy Bot", "deploy@example.com"))
+    .build();
+```
+
+In `Cargo.toml`:
+
+```toml
+[dependencies]
+bashkit = { version = "0.1", features = ["git"] }
+```
+
+## Supported Commands
+
+### Local Operations
+
+Fully functional git commands for repository management:
+
+| Command | Description | Example |
+|---------|-------------|----------|
+| `git init [path]` | Create empty repository | `git init /repo` |
+| `git config [key] [value]` | Get/set repository config | `git config user.name` |
+| `git add <pathspec>...` | Stage files | `git add file.txt` |
+| `git commit -m <message>` | Record changes | `git commit -m "Add feature"` |
+| `git status` | Show working tree status | `git status` |
+| `git log [-n N]` | Show commit history | `git log -n 5` |
+
+### Branch Operations
+
+Manage branches and navigate history:
+
+| Command | Description | Example |
+|---------|-------------|----------|
+| `git branch [-d] [name]` | List, create, or delete branches | `git branch feature` |
+| `git checkout [-b] <branch\|commit>` | Switch or create branches | `git checkout -b feature` |
+| `git diff [from] [to]` | Show changes | `git diff main feature` |
+| `git reset [--soft\|--mixed\|--hard]` | Reset HEAD | `git reset --hard` |
+
+### Remote Operations (Virtual Mode)
+
+<Warning>
+Remote operations validate URLs against the allowlist but return virtual mode messages. Actual network operations are not supported in VFS-only mode.
+</Warning>
+
+| Command | Description | Status |
+|---------|-------------|--------|
+| `git remote [-v]` | List remotes | Fully functional |
+| `git remote add <name> <url>` | Add remote (validates URL) | URL validation only |
+| `git remote remove <name>` | Remove remote | Fully functional |
+| `git clone <url> [path]` | Validates URL | Virtual mode message |
+| `git push [remote]` | Validates URL | Virtual mode message |
+| `git pull [remote]` | Validates URL | Virtual mode message |
+| `git fetch [remote]` | Validates URL | Virtual mode message |
+
+## Usage Examples
+
+### Basic Workflow
+
+```rust
+use bashkit::{Bash, GitConfig};
+
+let mut bash = Bash::builder()
+    .git(GitConfig::new().author("Test User", "test@example.com"))
+    .build();
+
+// Initialize repository
+bash.exec("git init /repo").await?;
+
+// Create and stage a file
+bash.exec("cd /repo && echo 'data' > file.txt").await?;
+bash.exec("cd /repo && git add file.txt").await?;
+
+// Commit changes
+bash.exec("cd /repo && git commit -m 'Initial commit'").await?;
+
+// Check status
+let result = bash.exec("cd /repo && git status").await?;
+assert!(result.stdout.contains("nothing to commit"));
+```
+
+### Branch Management
+
+```bash
+# Create and switch to new branch
+git checkout -b feature
+
+# Make changes and commit
+echo "new feature" > feature.txt
+git add feature.txt
+git commit -m "Add feature"
+
+# Switch back to main
+git checkout main
+
+# List all branches
+git branch
+```
+
+### Remote Configuration
+
+```rust
+use bashkit::{Bash, GitConfig};
+
+let mut bash = Bash::builder()
+    .git(GitConfig::new()
+        .author("Deploy Bot", "deploy@example.com")
+        .allow_remote("https://github.com/myorg/*"))
+    .build();
+
+// Add remote (validates URL against allowlist)
+bash.exec("cd /repo && git remote add origin https://github.com/myorg/repo").await?;
+
+// List remotes
+bash.exec("cd /repo && git remote -v").await?;
+```
+
+## Configuration
+
+### GitConfig API
+
+Configure git behavior via `GitConfig`:
+
+```rust
+use bashkit::GitConfig;
+
+let config = GitConfig::new()
+    .author("Your Name", "your.email@example.com")
+    .allow_remote("https://github.com/myorg/*")
+    .allow_remote("https://gitlab.com/myteam/*");
+```
+
+**Methods:**
+
+- `new()` - Create new config with default virtual identity
+- `author(name, email)` - Set author name and email for commits
+- `allow_remote(pattern)` - Allow remote URL pattern (HTTPS only)
+
+### Remote URL Security
+
+Remote URLs must:
+
+- Be explicitly allowlisted via `.allow_remote(pattern)`
+- Use HTTPS only (no SSH, no `git://` protocol)
+- Match at least one allowlist pattern
+
+Patterns support wildcards: `https://github.com/myorg/*`
+
+## Implementation Details
+
+### Storage Format
+
+Git operations use a simplified storage format in the VFS:
+
+- `.git/HEAD` - Current branch reference
+- `.git/config` - Repository configuration (INI format)
+- `.git/index` - Staged files (newline-separated paths)
+- `.git/commits` - Commit history (pipe-separated fields)
+- `.git/refs/heads/<branch>` - Branch references
+
+This provides:
+
+- Full VFS isolation
+- Security-focused implementation
+- Correct user-facing behavior
+- No host filesystem access
+
+## Security
+
+All git operations are sandboxed:
+
+| Threat | Mitigation |
+|--------|------------|
+| Host identity leak | Configurable virtual identity |
+| Host config access | No host filesystem access |
+| Credential theft | No host filesystem access |
+| Repository escape | All paths constrained to VFS |
+| Many git objects | Filesystem file count limit |
+| Deep history | Log limit parameter |
+| Large pack files | Filesystem size limits |
+
+See `specs/006-threat-model.md` Section 8 (TM-GIT-*) for detailed threat analysis.
+
+## Limitations
+
+### Not Yet Implemented
+
+The following commands are planned but not yet available:
+
+- `git merge <branch>` - Merge branches
+- `git rebase <branch>` - Rebase commits
+- `git stash [push|pop|list]` - Stash changes
+
+### Virtual Mode
+
+Remote network operations (`clone`, `push`, `pull`, `fetch`) validate URLs but do not perform actual network requests. This is intentional - BashKit's VFS-only design prevents real network access.
+
+For testing workflows that include remote operations, use `git remote add` to configure remotes (which is fully functional).
+
+## Testing
+
+Run git feature tests:
+
+```bash
+# All git tests
+cargo test --features git
+
+# Integration tests only
+cargo test --features git git_integration
+
+# Security tests
+cargo test --features git,failpoints git_security
+```
+
+Test files:
+
+- `tests/git_integration_tests.rs` - Functional tests
+- `tests/git_security_tests.rs` - TM-GIT-* threat tests
+- `tests/git_remote_security_tests.rs` - Remote security tests
+- `tests/git_advanced_tests.rs` - Branch/checkout/diff/reset tests
+
+## See Also
+
+- [Threat Model](/security/threat-model) - Security analysis (TM-GIT-*)
+- [Virtual Filesystem](/core/virtual-filesystem) - VFS implementation
+- [Builtins](/core/builtins) - Builtin command reference

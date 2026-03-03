@@ -1,0 +1,306 @@
+---
+title: Contributing Guide
+description: How to contribute to BashKit
+---
+
+Thanks for your interest in contributing to BashKit!
+
+## Setup
+
+### Prerequisites
+
+- Rust (stable toolchain)
+- Git
+- just (task runner)
+
+### Clone and Build
+
+```bash
+# Clone
+git clone https://github.com/everruns/bashkit.git
+cd bashkit
+
+# Install just (task runner)
+cargo install just
+
+# Build
+just build
+
+# Test
+just test
+```
+
+## Development Workflow
+
+1. **Fork the repo** on GitHub
+2. **Create a feature branch** from `main`
+3. **Make changes** with tests
+4. **Run pre-PR checks**: `just pre-pr`
+5. **Submit a pull request**
+
+## Common Commands
+
+```bash
+just --list       # Show all commands
+just build        # Build all crates
+just test         # Run all tests
+just fmt          # Format code (auto-fix)
+just clippy       # Run clippy linter
+just check        # fmt + clippy + test (checks only)
+just pre-pr       # Full pre-PR validation
+```
+
+## Code Style
+
+### Formatting
+
+Use `cargo fmt` for consistent formatting:
+
+```bash
+just fmt          # Auto-format all code
+cargo fmt --check # Check without modifying
+```
+
+### Linting
+
+Use `cargo clippy` with strict warnings:
+
+```bash
+just clippy
+cargo clippy -- -D warnings
+```
+
+### License Check
+
+Ensure dependencies have compatible licenses:
+
+```bash
+cargo deny check
+```
+
+## Commit Messages
+
+Follow [Conventional Commits](https://www.conventionalcommits.org):
+
+```
+type(scope): description
+
+Optional body with more details.
+```
+
+### Types
+
+- `feat` - New feature
+- `fix` - Bug fix
+- `docs` - Documentation changes
+- `test` - Test additions or changes
+- `refactor` - Code refactoring
+- `chore` - Maintenance tasks
+
+### Examples
+
+```
+feat(parser): add brace expansion support
+
+Implements {a,b,c} and {1..5} syntax.
+```
+
+```
+fix(awk): handle regex in gsub correctly
+
+Fixes issue where gsub(/pattern/, repl) failed.
+```
+
+```
+docs: update compatibility scorecard
+
+Adds newly implemented features to the matrix.
+```
+
+```
+test: add array edge case tests
+```
+
+## Adding Features
+
+### 1. Check Specifications
+
+Check if the feature is documented in `specs/`:
+
+- `001-architecture.md` - Core design
+- `002-parser.md` - Parser details
+- `003-vfs.md` - Filesystem
+- `005-builtins.md` - Builtin commands
+- etc.
+
+### 2. Add Spec Tests
+
+Create tests in `crates/bashkit/tests/spec_cases/`:
+
+```sh
+### test_name
+# Optional description
+echo hello world
+### expect
+hello world
+### end
+
+### skipped_test
+### skip: reason for skipping
+command
+### expect
+expected
+### end
+```
+
+### 3. Implement the Feature
+
+Write code with tests:
+
+- Unit tests for individual components
+- Integration tests for end-to-end behavior
+- Security tests if touching security-sensitive code
+
+### 4. Update Documentation
+
+Update relevant docs:
+
+- `crates/bashkit/docs/compatibility.md` - Feature matrix
+- `specs/009-implementation-status.md` - Status tracking
+- Rustdoc comments for public APIs
+
+## Pull Request Checklist
+
+Before submitting:
+
+- [ ] `just pre-pr` passes
+- [ ] Rebased on `main`
+- [ ] Specs updated if behavior changes
+- [ ] CI green
+- [ ] All PR comments resolved
+
+## Pre-PR Checklist
+
+The `just pre-pr` command runs:
+
+1. `cargo fmt --check` - Code formatting
+2. `cargo clippy --all-targets --all-features -- -D warnings` - Linting
+3. `cargo test --all-features` - All tests
+4. Unit tests cover positive and negative scenarios
+5. Security tests if touching user input, parsing, or sandboxing
+6. Compatibility tests if affecting Bash behavior parity
+
+## Testing
+
+### Running Tests
+
+```bash
+# All tests
+just test
+cargo test --all-features
+
+# Specific test
+cargo test test_name
+
+# Spec tests only
+cargo test --test spec_tests
+
+# Compare with real bash
+cargo test --test spec_tests -- bash_comparison_tests --ignored
+```
+
+### Spec Test Format
+
+Tests in `.test.sh` files use this format:
+
+```sh
+### test_name
+# Optional description
+command to run
+### expect
+expected output
+### end
+
+### test_with_stderr
+command 2>&1
+### expect
+expected combined output
+### end
+
+### skipped_test
+### skip: reason for skipping
+command
+### expect
+expected
+### end
+```
+
+## Architecture
+
+See the `specs/` directory for design documents:
+
+- `001-architecture.md` - Overall design
+- `002-parser.md` - Parser/lexer
+- `003-vfs.md` - Virtual filesystem
+- `004-testing.md` - Testing strategy
+- `005-builtins.md` - Builtin commands
+- `006-threat-model.md` - Security threats
+- `007-parallel-execution.md` - Threading model
+- `008-posix-compliance.md` - POSIX design
+- `009-implementation-status.md` - Feature status
+
+## Code Organization
+
+```
+crates/
+├── bashkit/              # Main crate
+│   ├── src/
+│   │   ├── parser/       # Lexer and parser
+│   │   ├── interpreter/  # Execution engine
+│   │   ├── builtins/     # Built-in commands
+│   │   ├── fs/           # Virtual filesystem
+│   │   └── network/      # HTTP client
+│   ├── tests/            # Integration tests
+│   └── docs/             # Embedded documentation
+├── bashkit-cli/          # CLI binary
+├── bashkit-eval/         # LLM evaluation harness
+├── bashkit-bench/        # Benchmarking tool
+└── bashkit-python/       # Python bindings
+```
+
+## Security
+
+For security-sensitive changes:
+
+1. Review the [threat model](/resources/threat-model)
+2. Add tests in `tests/threat_model_tests.rs`
+3. Reference threat IDs in code comments
+4. Update `specs/006-threat-model.md`
+
+### Fail-Point Testing
+
+Use fail-point injection for security testing:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use fail::FailScenario;
+    
+    #[test]
+    fn test_security_control() {
+        let scenario = FailScenario::setup();
+        fail::cfg("checkpoint", "return").unwrap();
+        // Test that security control still works
+    }
+}
+```
+
+## Questions?
+
+Open an issue at https://github.com/everruns/bashkit/issues
+
+## See Also
+
+- [Architecture](https://github.com/everruns/bashkit/blob/main/specs/001-architecture.md) - System design
+- [Testing](https://github.com/everruns/bashkit/blob/main/specs/004-testing.md) - Testing strategy
+- [AGENTS.md](https://github.com/everruns/bashkit/blob/main/AGENTS.md) - Coding agent guidance

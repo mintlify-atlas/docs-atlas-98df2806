@@ -1,0 +1,298 @@
+---
+title: Bash
+description: Core bash interpreter API reference
+---
+
+The `Bash` class is the core interpreter with a virtual filesystem. State persists between calls—files created in one `execute()` are available in subsequent calls.
+
+## Constructor
+
+```python
+from bashkit import Bash
+
+bash = Bash(
+    username="user",
+    hostname="sandbox",
+    max_commands=None,
+    max_loop_iterations=None
+)
+```
+
+### Parameters
+
+<ParamField path="username" type="str" optional>
+  Custom username for the sandbox environment. Affects `whoami` output.
+  
+  **Default:** `"user"`
+</ParamField>
+
+<ParamField path="hostname" type="str" optional>
+  Custom hostname for the sandbox environment. Affects `hostname` output.
+  
+  **Default:** `"sandbox"`
+</ParamField>
+
+<ParamField path="max_commands" type="int" optional>
+  Maximum number of commands that can be executed in a single `execute()` call.
+  
+  **Default:** unlimited
+</ParamField>
+
+<ParamField path="max_loop_iterations" type="int" optional>
+  Maximum number of loop iterations allowed in a single `execute()` call. Protects against infinite loops.
+  
+  **Default:** unlimited
+</ParamField>
+
+## Methods
+
+### execute()
+
+Execute bash commands asynchronously.
+
+```python
+result = await bash.execute("echo 'Hello!'")
+```
+
+<ParamField path="commands" type="str" required>
+  Bash commands to execute, like `bash -c "commands"`
+</ParamField>
+
+<ResponseField name="result" type="ExecResult">
+  Execution result containing stdout, stderr, exit_code, and error fields
+</ResponseField>
+
+#### Example
+
+```python
+import asyncio
+from bashkit import Bash
+
+async def main():
+    bash = Bash()
+    result = await bash.execute("echo 'Hello, World!'")
+    print(result.stdout)  # Hello, World!
+    print(result.success)  # True
+
+asyncio.run(main())
+```
+
+### execute_sync()
+
+Execute bash commands synchronously (blocking).
+
+```python
+result = bash.execute_sync("echo 'Hello!'")
+```
+
+<ParamField path="commands" type="str" required>
+  Bash commands to execute
+</ParamField>
+
+<ResponseField name="result" type="ExecResult">
+  Execution result containing stdout, stderr, exit_code, and error fields
+</ResponseField>
+
+#### Example
+
+```python
+from bashkit import Bash
+
+bash = Bash()
+result = bash.execute_sync("echo 'Hello, World!'")
+print(result.stdout)  # Hello, World!
+```
+
+### reset()
+
+Reset the interpreter to a fresh state, preserving security configuration.
+
+```python
+bash.reset()
+```
+
+This clears:
+- All environment variables
+- All files in the virtual filesystem
+- All bash functions and aliases
+- All command history
+
+This preserves:
+- `username` configuration
+- `hostname` configuration  
+- `max_commands` limit
+- `max_loop_iterations` limit
+
+#### Example
+
+```python
+bash = Bash(username="agent", max_commands=1000)
+
+# Create state
+bash.execute_sync("export MY_VAR='value'")
+bash.execute_sync("echo 'data' > /tmp/file.txt")
+
+# Reset clears state but preserves config
+bash.reset()
+
+result = bash.execute_sync("echo ${MY_VAR:-unset}")
+print(result.stdout)  # unset
+
+result = bash.execute_sync("whoami")
+print(result.stdout)  # agent (config preserved)
+```
+
+### description()
+
+Get a human-readable description of the interpreter.
+
+```python
+desc = bash.description()
+```
+
+<ResponseField name="description" type="str">
+  Multi-line description of the bash interpreter and its capabilities
+</ResponseField>
+
+#### Example
+
+```python
+bash = Bash()
+print(bash.description())
+```
+
+### help()
+
+Get detailed documentation in man-page format.
+
+```python
+help_text = bash.help()
+```
+
+<ResponseField name="help" type="str">
+  Detailed documentation about commands, syntax, and features
+</ResponseField>
+
+### input_schema()
+
+Get JSON Schema for input parameters (for LLM tool integration).
+
+```python
+schema = bash.input_schema()
+```
+
+<ResponseField name="schema" type="str">
+  JSON Schema string describing the input format
+</ResponseField>
+
+#### Example
+
+```python
+import json
+
+bash = Bash()
+schema = json.loads(bash.input_schema())
+print(schema["properties"]["commands"])
+```
+
+### output_schema()
+
+Get JSON Schema for output format (for LLM tool integration).
+
+```python
+schema = bash.output_schema()
+```
+
+<ResponseField name="schema" type="str">
+  JSON Schema string describing the output format
+</ResponseField>
+
+## Examples
+
+### Basic Execution
+
+```python
+from bashkit import Bash
+
+bash = Bash()
+
+# Simple command
+result = bash.execute_sync("echo 'Hello!'")
+print(result.stdout)  # Hello!
+
+# Pipeline
+result = bash.execute_sync("echo -e 'line1\\nline2\\nline3' | grep line2")
+print(result.stdout)  # line2
+```
+
+### Virtual Filesystem
+
+```python
+bash = Bash()
+
+# Files persist between calls
+bash.execute_sync("mkdir -p /tmp/demo")
+bash.execute_sync("echo 'data' > /tmp/demo/file.txt")
+
+result = bash.execute_sync("cat /tmp/demo/file.txt")
+print(result.stdout)  # data
+```
+
+### Variables
+
+```python
+bash = Bash()
+
+# Variables persist
+bash.execute_sync("MY_VAR='persistent'")
+result = bash.execute_sync("echo $MY_VAR")
+print(result.stdout)  # persistent
+```
+
+### Error Handling
+
+```python
+bash = Bash()
+
+result = bash.execute_sync("exit 42")
+
+if not result.success:
+    print(f"Command failed with exit code {result.exit_code}")
+    print(f"Error: {result.stderr}")
+```
+
+### Resource Limits
+
+```python
+bash = Bash(max_loop_iterations=100)
+
+result = bash.execute_sync("i=0; while true; do i=$((i+1)); done")
+print(result.success)  # False (stopped by limit)
+```
+
+### Async Execution
+
+```python
+import asyncio
+from bashkit import Bash
+
+async def main():
+    bash = Bash()
+    
+    # Concurrent execution
+    results = await asyncio.gather(
+        bash.execute("sleep 1; echo 'first'"),
+        bash.execute("sleep 1; echo 'second'")
+    )
+    
+    for result in results:
+        print(result.stdout)
+
+asyncio.run(main())
+```
+
+## See Also
+
+- [BashTool](/python/api/bash-tool) - Convenience wrapper with LLM tool metadata
+- [ExecResult](/python/api/exec-result) - Execution result object
+- [Configuration](/python/configuration) - Detailed configuration guide

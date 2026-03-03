@@ -1,0 +1,437 @@
+---
+title: Tool Trait
+description: Contract for LLM tool integration
+---
+
+## Overview
+
+The `Tool` trait defines the public contract for integrating bash execution with LLMs and AI agents. All tools must implement this trait to provide introspection (schemas, documentation) and execution capabilities.
+
+<Warning>
+This trait is a **public library contract**. Breaking changes require a major version bump. See `specs/009-tool-contract.md` for the full specification.
+</Warning>
+
+## Trait Definition
+
+```rust
+#[async_trait]
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn short_description(&self) -> &str;
+    fn description(&self) -> String;
+    fn help(&self) -> String;
+    fn system_prompt(&self) -> String;
+    fn input_schema(&self) -> serde_json::Value;
+    fn output_schema(&self) -> serde_json::Value;
+    fn version(&self) -> &str;
+    async fn execute(&mut self, req: ToolRequest) -> ToolResponse;
+    async fn execute_with_status(
+        &mut self,
+        req: ToolRequest,
+        status_callback: Box<dyn FnMut(ToolStatus) + Send>,
+    ) -> ToolResponse;
+}
+```
+
+## Introspection Methods
+
+### `name()`
+
+Return tool identifier (e.g., "bashkit", "calculator").
+
+```rust
+fn name(&self) -> &str
+```
+
+<ResponseField name="name" type="&str">
+  Unique tool identifier for LLM tool selection
+</ResponseField>
+
+**Example:**
+
+```rust
+use bashkit::BashTool;
+
+let tool = BashTool::default();
+assert_eq!(tool.name(), "bashkit");
+```
+
+### `short_description()`
+
+Return one-line description for tool listings.
+
+```rust
+fn short_description(&self) -> &str
+```
+
+<ResponseField name="description" type="&str">
+  Brief description (one sentence)
+</ResponseField>
+
+**Example:**
+
+```rust
+assert_eq!(
+    tool.short_description(),
+    "Virtual bash interpreter with virtual filesystem"
+);
+```
+
+### `description()`
+
+Return full description with configuration info.
+
+```rust
+fn description(&self) -> String
+```
+
+<ResponseField name="description" type="String">
+  Detailed description including dynamic configuration (custom builtins, limits, etc.)
+</ResponseField>
+
+**Example:**
+
+```rust
+let desc = tool.description();
+assert!(desc.contains("Virtual bash interpreter"));
+assert!(desc.contains("Supported tools:"));
+```
+
+### `help()`
+
+Return full documentation for LLMs (human-readable with examples).
+
+```rust
+fn help(&self) -> String
+```
+
+<ResponseField name="help" type="String">
+  Complete documentation in man-page style format with examples and configuration
+</ResponseField>
+
+**Format:**
+The help text follows Unix man-page conventions:
+- NAME section
+- SYNOPSIS section
+- DESCRIPTION section
+- BUILTINS section (for BashTool)
+- INPUT/OUTPUT sections
+- EXAMPLES section
+- CONFIGURATION section (if custom config exists)
+- NOTES section (capability hints from custom builtins)
+- WARNINGS section (missing language interpreters)
+
+**Example:**
+
+```rust
+let help = tool.help();
+assert!(help.contains("BASH(1)"));
+assert!(help.contains("SYNOPSIS"));
+assert!(help.contains("EXAMPLES"));
+```
+
+### `system_prompt()`
+
+Return condensed description for system prompts (token-efficient).
+
+```rust
+fn system_prompt(&self) -> String
+```
+
+<ResponseField name="prompt" type="String">
+  Compact tool description suitable for LLM system prompts
+</ResponseField>
+
+**Format:**
+```
+# Bash Tool
+
+Virtual bash interpreter with virtual filesystem.
+Home: /home/{username}
+
+Input: {"commands": "<bash commands>"}
+Output: {stdout, stderr, exit_code}
+
+Note: {builtin hints}
+Warning: {missing languages}
+```
+
+**Example:**
+
+```rust
+let prompt = tool.system_prompt();
+assert!(prompt.contains("# Bash Tool"));
+assert!(prompt.contains("Input:"));
+assert!(prompt.contains("Output:"));
+```
+
+### `input_schema()`
+
+Return JSON Schema for input validation.
+
+```rust
+fn input_schema(&self) -> serde_json::Value
+```
+
+<ResponseField name="schema" type="serde_json::Value">
+  JSON Schema definition for ToolRequest
+</ResponseField>
+
+**Example:**
+
+```rust
+let schema = tool.input_schema();
+assert!(schema["properties"]["commands"].is_object());
+```
+
+### `output_schema()`
+
+Return JSON Schema for output structure.
+
+```rust
+fn output_schema(&self) -> serde_json::Value
+```
+
+<ResponseField name="schema" type="serde_json::Value">
+  JSON Schema definition for ToolResponse
+</ResponseField>
+
+**Example:**
+
+```rust
+let schema = tool.output_schema();
+assert!(schema["properties"]["stdout"].is_object());
+assert!(schema["properties"]["stderr"].is_object());
+assert!(schema["properties"]["exit_code"].is_object());
+```
+
+### `version()`
+
+Return library/tool version.
+
+```rust
+fn version(&self) -> &str
+```
+
+<ResponseField name="version" type="&str">
+  Semantic version string (e.g., "0.1.0")
+</ResponseField>
+
+**Example:**
+
+```rust
+assert!(!tool.version().is_empty());
+```
+
+## Execution Methods
+
+### `execute()`
+
+Execute the tool and return results.
+
+```rust
+async fn execute(&mut self, req: ToolRequest) -> ToolResponse
+```
+
+<ParamField path="req" type="ToolRequest" required>
+  Tool execution request. See [ToolRequest](/api/tool-request).
+</ParamField>
+
+<ResponseField name="response" type="ToolResponse">
+  Execution result. See [ToolResponse](/api/tool-response).
+</ResponseField>
+
+**Example:**
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest};
+
+#[tokio::main]
+async fn main() {
+    let mut tool = BashTool::default();
+    
+    let req = ToolRequest {
+        commands: "echo hello".to_string(),
+        timeout_ms: None,
+    };
+    
+    let resp = tool.execute(req).await;
+    assert_eq!(resp.stdout, "hello\n");
+    assert_eq!(resp.exit_code, 0);
+}
+```
+
+**Timeout Handling:**
+If `ToolRequest::timeout_ms` is set, execution is aborted after the specified duration and a response with `exit_code = 124` is returned (matching bash `timeout` convention).
+
+### `execute_with_status()`
+
+Execute with progress callbacks.
+
+```rust
+async fn execute_with_status(
+    &mut self,
+    req: ToolRequest,
+    status_callback: Box<dyn FnMut(ToolStatus) + Send>,
+) -> ToolResponse
+```
+
+<ParamField path="req" type="ToolRequest" required>
+  Tool execution request
+</ParamField>
+
+<ParamField path="status_callback" type="Box<dyn FnMut(ToolStatus) + Send>" required>
+  Callback for progress updates
+</ParamField>
+
+<ResponseField name="response" type="ToolResponse">
+  Final execution result
+</ResponseField>
+
+**Status Phases:**
+- `validate` (0%) - Request validation
+- `parse` (10%) - Script parsing
+- `execute` (20%) - Execution started
+- `output` - Streaming output chunks
+- `complete` (100%) - Execution finished
+
+**Example:**
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest};
+use std::sync::{Arc, Mutex};
+
+#[tokio::main]
+async fn main() {
+    let mut tool = BashTool::default();
+    let phases = Arc::new(Mutex::new(Vec::new()));
+    let phases_cb = phases.clone();
+    
+    let req = ToolRequest::new("echo test");
+    
+    let resp = tool.execute_with_status(
+        req,
+        Box::new(move |status| {
+            phases_cb.lock().unwrap().push(status.phase.clone());
+        }),
+    ).await;
+    
+    assert_eq!(resp.stdout, "test\n");
+    
+    let phases = phases.lock().unwrap();
+    assert!(phases.contains(&"validate".to_string()));
+    assert!(phases.contains(&"complete".to_string()));
+}
+```
+
+## Implementors
+
+### BashTool
+
+Virtual bash interpreter implementing the Tool trait.
+
+```rust
+use bashkit::BashTool;
+
+let tool = BashTool::default();
+// or with configuration:
+let tool = BashTool::builder()
+    .username("agent")
+    .hostname("sandbox")
+    .build();
+```
+
+See [BashTool](/api/bash-tool) for details.
+
+## Thread Safety
+
+The `Tool` trait requires `Send + Sync`:
+- **Send**: Tool can be transferred between threads
+- **Sync**: Tool can be accessed from multiple threads
+
+This enables:
+- Parallel tool execution
+- Thread-safe agent architectures
+- Async runtime compatibility
+
+## Custom Tool Implementation
+
+To create a custom tool:
+
+```rust
+use bashkit::{Tool, ToolRequest, ToolResponse, ToolStatus, async_trait};
+
+struct MyTool;
+
+#[async_trait]
+impl Tool for MyTool {
+    fn name(&self) -> &str {
+        "mytool"
+    }
+    
+    fn short_description(&self) -> &str {
+        "My custom tool"
+    }
+    
+    fn description(&self) -> String {
+        "Full description of my tool".to_string()
+    }
+    
+    fn help(&self) -> String {
+        "Detailed help text".to_string()
+    }
+    
+    fn system_prompt(&self) -> String {
+        "# My Tool\n\nBrief description\n".to_string()
+    }
+    
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "input": {"type": "string"}
+            }
+        })
+    }
+    
+    fn output_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "output": {"type": "string"}
+            }
+        })
+    }
+    
+    fn version(&self) -> &str {
+        "1.0.0"
+    }
+    
+    async fn execute(&mut self, req: ToolRequest) -> ToolResponse {
+        // Custom execution logic
+        ToolResponse {
+            stdout: "result".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+            error: None,
+        }
+    }
+    
+    async fn execute_with_status(
+        &mut self,
+        req: ToolRequest,
+        mut status_callback: Box<dyn FnMut(ToolStatus) + Send>,
+    ) -> ToolResponse {
+        status_callback(ToolStatus::new("validate"));
+        let result = self.execute(req).await;
+        status_callback(ToolStatus::new("complete"));
+        result
+    }
+}
+```
+
+## See Also
+
+- [BashTool](/api/bash-tool) - Bash interpreter tool implementation
+- [ToolRequest](/api/tool-request) - Execution request structure
+- [ToolResponse](/api/tool-response) - Execution response structure

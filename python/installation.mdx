@@ -1,0 +1,62 @@
+---
+title: Installation
+description: Install the BashKit Python SDK
+---
+
+## Install from PyPI
+
+Install the base package:
+
+```bash
+pip install bashkit
+```
+
+## Optional Extras
+
+BashKit provides optional integrations with popular AI agent frameworks.
+
+### LangChain Integration
+
+Install BashKit with LangChain support:
+
+```bash
+pip install 'bashkit[langchain]'
+```
+
+This includes `langchain-core` for creating LangChain-compatible tools.
+
+### PydanticAI Integration
+
+Install BashKit with PydanticAI support:
+
+```bash
+pip install 'bashkit[pydantic-ai]'
+```
+
+This includes `pydantic-ai` for creating PydanticAI-compatible tools.
+
+### All Integrations
+
+Install everything:
+
+```bash
+pip install 'bashkit[langchain,pydantic-ai]'
+```
+
+## Verify Installation
+
+Verify the installation:
+
+```python
+from bashkit import BashTool
+
+tool = BashTool()
+result = tool.execute_sync("echo 'Hello, BashKit!'")
+print(result.stdout)  # Hello, BashKit!
+```
+
+## Requirements
+
+- Python 3.9 or later
+- No external dependencies for core functionality
+- Framework-specific dependencies only required for integrations

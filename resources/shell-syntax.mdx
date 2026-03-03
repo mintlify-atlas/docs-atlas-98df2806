@@ -1,0 +1,414 @@
+---
+title: Shell Syntax
+description: Shell syntax support including variables, pipelines, redirects, and control flow
+---
+
+BashKit supports substantial POSIX shell syntax with Bash extensions.
+
+## Variables
+
+### Variable Assignment
+
+```bash
+name="value"
+count=42
+path="/home/user"
+```
+
+### Variable Expansion
+
+| Syntax | Description |
+|--------|-------------|
+| `$var` | Simple expansion |
+| `${var}` | Braced expansion |
+| `${var:-default}` | Use default if unset/empty |
+| `${var:=default}` | Assign default if unset/empty |
+| `${var:+alt}` | Use alt if set |
+| `${var:?error}` | Error if unset/empty |
+| `${#var}` | Length of value |
+| `${var#pat}` | Remove shortest prefix |
+| `${var##pat}` | Remove longest prefix |
+| `${var%pat}` | Remove shortest suffix |
+| `${var%%pat}` | Remove longest suffix |
+
+### Special Variables
+
+| Variable | Description |
+|----------|-------------|
+| `$?` | Last exit code |
+| `$#` | Number of positional params |
+| `$@` | All positional params (separate) |
+| `$*` | All positional params (joined) |
+| `$0` | Script/function name |
+| `$1`-`$9` | Positional parameters |
+| `$$` | Current PID |
+| `$!` | Last background job ID |
+| `$-` | Current option flags |
+| `$RANDOM` | Random number (0-32767) |
+| `$LINENO` | Current line number |
+
+## Pipelines and Lists
+
+### Operators
+
+| Operator | Description |
+|----------|-------------|
+| `|` | Pipeline |
+| `&&` | AND list |
+| `||` | OR list |
+| `;` | Sequential execution |
+| `&` | Background (parsed only) |
+| `!` | Pipeline negation |
+
+### Examples
+
+```bash
+cat file.txt | grep pattern | sort
+command1 && command2  # Run command2 if command1 succeeds
+command1 || command2  # Run command2 if command1 fails
+command1; command2    # Run sequentially
+```
+
+## Redirections
+
+### Output Redirection
+
+```bash
+command > file        # Overwrite file
+command >> file       # Append to file
+command 2> file       # Redirect stderr
+command 2>&1          # Stderr to stdout
+command &> file       # Both stdout and stderr to file
+```
+
+### Input Redirection
+
+```bash
+command < file        # Input from file
+command <<< "string"  # Here-string
+command <<EOF         # Here-document
+line 1
+line 2
+EOF
+```
+
+## Control Flow
+
+### if/elif/else
+
+```bash
+if [ condition ]; then
+    command1
+elif [ other_condition ]; then
+    command2
+else
+    command3
+fi
+```
+
+### for Loop
+
+```bash
+for i in a b c; do
+    echo $i
+done
+
+# C-style for loop
+for ((i=0; i<10; i++)); do
+    echo $i
+done
+
+# Glob expansion
+for file in *.txt; do
+    cat "$file"
+done
+```
+
+### while Loop
+
+```bash
+while [ condition ]; do
+    command
+done
+```
+
+### until Loop
+
+```bash
+until [ condition ]; do
+    command
+done
+```
+
+### case Statement
+
+```bash
+case $var in
+    pattern1)
+        command1
+        ;;
+    pattern2)
+        command2
+        ;;
+    *)
+        default_command
+        ;;
+esac
+```
+
+### select Construct
+
+```bash
+select option in "Option 1" "Option 2" "Quit"; do
+    case $option in
+        "Quit")
+            break
+            ;;
+        *)
+            echo "You selected: $option"
+            ;;
+    esac
+done
+```
+
+## Functions
+
+### Function Definition
+
+```bash
+# Bash-style
+function name {
+    command
+}
+
+# POSIX-style
+name() {
+    command
+}
+```
+
+### Function Usage
+
+```bash
+greet() {
+    echo "Hello, $1!"
+}
+
+greet "World"  # Outputs: Hello, World!
+```
+
+## Command Substitution
+
+```bash
+result=$(command)        # Modern syntax
+result=`command`         # Legacy syntax (not supported)
+
+# Example
+current_dir=$(pwd)
+file_count=$(ls | wc -l)
+```
+
+## Arithmetic Expansion
+
+```bash
+result=$((1 + 2))
+count=$((count + 1))
+
+# Operators
+sum=$((a + b))
+diff=$((a - b))
+prod=$((a * b))
+quot=$((a / b))
+mod=$((a % b))
+
+# Comparisons
+$((a == b))
+$((a != b))
+$((a < b))
+$((a > b))
+$((a <= b))
+$((a >= b))
+
+# Bitwise
+$((a & b))   # AND
+$((a | b))   # OR
+$((a ^ b))   # XOR
+$((~a))      # NOT
+$((a << n))  # Left shift
+$((a >> n))  # Right shift
+
+# Logical
+$((a && b))  # Logical AND
+$((a || b))  # Logical OR
+$((a ? b : c))  # Ternary
+```
+
+## Arrays
+
+### Array Declaration
+
+```bash
+arr=(a b c)
+arr[0]="first"
+arr[1]="second"
+```
+
+### Array Access
+
+```bash
+echo ${arr[0]}      # First element
+echo ${arr[@]}      # All elements (separate args)
+echo ${arr[*]}      # All elements (single arg when quoted)
+echo ${#arr[@]}     # Array length
+echo ${!arr[@]}     # Array indices
+```
+
+### Array Operations
+
+```bash
+arr+=(d e)          # Append elements
+slice=${arr[@]:1:2} # Slice (offset:length)
+```
+
+### Associative Arrays
+
+```bash
+declare -A map
+map[key]="value"
+map[foo]="bar"
+
+echo ${map[key]}    # Access by key
+echo ${!map[@]}     # All keys
+echo ${map[@]}      # All values
+```
+
+## Glob Patterns
+
+| Pattern | Matches |
+|---------|----------|
+| `*` | Any characters |
+| `?` | Single character |
+| `[abc]` | One of a, b, or c |
+| `[0-9]` | Any digit |
+| `**` | Recursive (with globstar) |
+
+### Glob Options
+
+```bash
+shopt -s dotglob      # Include hidden files
+shopt -s nocaseglob   # Case-insensitive
+shopt -s nullglob     # Empty if no match
+shopt -s failglob     # Error if no match
+shopt -s globstar     # Enable ** recursive
+```
+
+## Brace Expansion
+
+```bash
+echo {a,b,c}         # a b c
+echo {1..5}          # 1 2 3 4 5
+echo {01..10}        # 01 02 03 ... 10
+echo file{1..3}.txt  # file1.txt file2.txt file3.txt
+```
+
+## Process Substitution
+
+```bash
+diff <(command1) <(command2)
+command > >(tee file.txt)
+```
+
+## Quoting
+
+### Single Quotes
+
+Literal string, no expansion:
+
+```bash
+echo 'Hello $USER'  # Outputs: Hello $USER
+```
+
+### Double Quotes
+
+Variable expansion enabled:
+
+```bash
+echo "Hello $USER"  # Outputs: Hello username
+```
+
+### ANSI-C Quoting
+
+```bash
+echo $'Hello\nWorld'  # Outputs with newline
+echo $'\t\tTabbed'    # Outputs with tabs
+```
+
+## Test Operators
+
+### File Tests
+
+| Operator | Description |
+|----------|-------------|
+| `-e file` | File exists |
+| `-f file` | Is regular file |
+| `-d file` | Is directory |
+| `-s file` | Size > 0 |
+| `-r file` | Is readable |
+| `-w file` | Is writable |
+| `-x file` | Is executable |
+| `-L file` | Is symlink |
+
+### String Tests
+
+| Operator | Description |
+|----------|-------------|
+| `-z str` | Is empty |
+| `-n str` | Is non-empty |
+| `str1 = str2` | Equal |
+| `str1 != str2` | Not equal |
+
+### Numeric Tests
+
+| Operator | Description |
+|----------|-------------|
+| `-eq` | Equal |
+| `-ne` | Not equal |
+| `-lt` | Less than |
+| `-gt` | Greater than |
+| `-le` | Less or equal |
+| `-ge` | Greater or equal |
+
+## Shell Options
+
+### set Options
+
+```bash
+set -e  # Exit on error
+set -u  # Error on undefined variable
+set -x  # Print commands (xtrace)
+set -f  # Disable glob expansion
+set -o pipefail  # Pipeline returns rightmost non-zero
+```
+
+### shopt Options
+
+```bash
+shopt -s dotglob      # Include hidden files in globs
+shopt -s nocaseglob   # Case-insensitive globs
+shopt -s nullglob     # Empty expansion if no match
+shopt -s failglob     # Error if no match
+shopt -s globstar     # Enable ** recursive glob
+```
+
+## Comments
+
+```bash
+# This is a comment
+command  # Inline comment
+```
+
+## See Also
+
+- [Built-in Commands](/resources/builtin-commands) - Command reference
+- [POSIX Compliance](/resources/posix-compliance) - POSIX compliance details
+- [Compatibility](/resources/compatibility) - Feature matrix

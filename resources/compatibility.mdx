@@ -1,0 +1,278 @@
+---
+title: Compatibility
+description: Feature parity tracking for bash and common tools
+---
+
+This page tracks BashKit's compatibility with bash and common Unix tools.
+
+**Legend:** ✅ Implemented | ⚠️ Partial | ❌ Not implemented | N/A Security exclusion
+
+## Quick Status
+
+| Category | Implemented | Planned | Total |
+|----------|-------------|---------|-------|
+| Shell Builtins | 85 | 0 | 85 |
+| Text Processing | 14 | 0 | 14 |
+| File Operations | 10 | 0 | 10 |
+| Network | 2 | 0 | 2 |
+
+## POSIX Shell Compliance
+
+BashKit provides substantial compliance with IEEE Std 1003.1-2024 (POSIX.1-2024) Shell Command Language.
+
+| POSIX Category | Status |
+|----------------|--------|
+| Reserved Words (16) | Full compliance |
+| Special Parameters (8) | Full compliance |
+| Special Built-ins (15) | 13/15 implemented |
+| Word Expansions | Substantial compliance |
+| Redirections | Full compliance |
+| Compound Commands | Full compliance |
+
+**Security Exclusions:** `exec` and signal-based `trap` are intentionally not implemented for sandbox security.
+
+## Shell Syntax
+
+### Operators
+
+| Operator | Status | Example | Notes |
+|----------|--------|---------|-------|
+| `|` | ✅ | `cmd1 | cmd2` | Pipeline |
+| `&&` | ✅ | `cmd1 && cmd2` | AND list |
+| `||` | ✅ | `cmd1 || cmd2` | OR list |
+| `;` | ✅ | `cmd1; cmd2` | Sequential |
+| `&` | ⚠️ | `cmd &` | Parsed, runs synchronously |
+| `!` | ✅ | `! cmd` | Negate exit code |
+
+### Redirections
+
+| Redirect | Status | Example |
+|----------|--------|----------|
+| `>` | ✅ | `cmd > file` |
+| `>>` | ✅ | `cmd >> file` |
+| `<` | ✅ | `cmd < file` |
+| `<<<` | ✅ | `cmd <<< "string"` |
+| `<<EOF` | ✅ | Heredoc |
+| `2>` | ✅ | `cmd 2> file` |
+| `2>&1` | ✅ | `cmd 2>&1` |
+| `&>` | ✅ | `cmd &> file` |
+
+### Control Flow
+
+| Feature | Status |
+|---------|--------|
+| `if/elif/else/fi` | ✅ |
+| `for/do/done` | ✅ |
+| `while/do/done` | ✅ |
+| `until/do/done` | ✅ |
+| `case/esac` | ✅ |
+| `{ ... }` | ✅ |
+| `( ... )` | ✅ |
+| Functions | ✅ |
+
+## Variable Expansion
+
+| Syntax | Status | Description |
+|--------|--------|-------------|
+| `$var` | ✅ | Simple expansion |
+| `${var}` | ✅ | Braced expansion |
+| `${var:-default}` | ✅ | Use default if unset |
+| `${var:=default}` | ✅ | Assign default |
+| `${var:+alt}` | ✅ | Use alt if set |
+| `${var:?error}` | ✅ | Error if unset |
+| `${#var}` | ✅ | Length |
+| `${var#pat}` | ✅ | Remove shortest prefix |
+| `${var##pat}` | ✅ | Remove longest prefix |
+| `${var%pat}` | ✅ | Remove shortest suffix |
+| `${var%%pat}` | ✅ | Remove longest suffix |
+| `${var/pat/repl}` | ✅ | Substitute |
+| `${var^}` | ✅ | Uppercase first |
+| `${var,}` | ✅ | Lowercase first |
+
+## Arrays
+
+| Feature | Status | Example |
+|---------|--------|----------|
+| Declaration | ✅ | `arr=(a b c)` |
+| Index access | ✅ | `${arr[0]}` |
+| All elements `@` | ✅ | `${arr[@]}` |
+| All elements `*` | ✅ | `${arr[*]}` |
+| Array length | ✅ | `${#arr[@]}` |
+| Element length | ✅ | `${#arr[0]}` |
+| Append | ✅ | `arr+=(d e)` |
+| Slice | ✅ | `${arr[@]:1:2}` |
+| Indices | ✅ | `${!arr[@]}` |
+| Associative | ✅ | `declare -A` |
+
+## Expansions
+
+| Syntax | Status | Description |
+|--------|--------|-------------|
+| `$(cmd)` | ✅ | Command substitution |
+| `` `cmd` `` | ✅ | Backtick substitution |
+| `$((expr))` | ✅ | Arithmetic expansion |
+| `*`, `?` | ✅ | Glob patterns |
+| `[abc]` | ✅ | Bracket globs |
+| `{a,b,c}` | ✅ | Brace expansion |
+| `~` | ✅ | Tilde expansion |
+| `<(cmd)` | ✅ | Process substitution |
+
+## Test Operators
+
+### File Tests
+
+| Operator | Status | Description |
+|----------|--------|-------------|
+| `-e file` | ✅ | Exists |
+| `-f file` | ✅ | Is regular file |
+| `-d file` | ✅ | Is directory |
+| `-s file` | ✅ | Size > 0 |
+| `-r file` | ✅ | Is readable |
+| `-w file` | ✅ | Is writable |
+| `-x file` | ✅ | Is executable |
+| `-L file` | ✅ | Is symlink |
+
+### String Tests
+
+| Operator | Status |
+|----------|--------|
+| `-z str` | ✅ |
+| `-n str` | ✅ |
+| `str1 = str2` | ✅ |
+| `str1 != str2` | ✅ |
+
+### Numeric Tests
+
+| Operator | Status |
+|----------|--------|
+| `-eq` | ✅ |
+| `-ne` | ✅ |
+| `-lt` | ✅ |
+| `-gt` | ✅ |
+| `-le` | ✅ |
+| `-ge` | ✅ |
+
+## Text Processing
+
+### AWK Limitations
+
+**All AWK tests pass.** Implemented features:
+
+- For/while/do-while loops with break/continue
+- Arrays with sorted iteration
+- User-defined functions
+- Regex patterns and match()
+- Printf formats including %.6g
+- Field assignment and getline
+
+### Sed Limitations
+
+**All sed tests pass.** Implemented features:
+
+- Hold space operations (h, H, g, G, x)
+- Grouped commands and branching (b, t, :label)
+- Extended regex (-E)
+- Regex range addressing
+
+### JQ Limitations
+
+**5 tests skipped:**
+
+| Feature | Count | Notes |
+|---------|-------|-------|
+| Alternative `//` | 1 | jaq errors on `.foo` applied to null |
+| Path functions | 2 | `setpath`, `leaf_paths` not in jaq |
+| Regex functions | 2 | `match`/`scan` capture differences |
+
+**Recently implemented:**
+- `try`/`catch` expressions
+- `--arg` and `--argjson` variable bindings
+- `env` builtin
+- `input`/`inputs` iterators
+
+## Resource Limits
+
+Default limits (configurable):
+
+| Limit | Default |
+|-------|----------|
+| Commands | 10,000 |
+| Loop iterations | 100,000 |
+| Function depth | 100 |
+| Output size | 10MB |
+| Parser timeout | 5 seconds |
+| Parser operations (fuel) | 100,000 |
+| Input size | 10MB |
+| AST depth | 100 |
+| Max file size | 10MB |
+| Max file count | 10,000 |
+| Max total bytes | 100MB |
+
+## Filesystem
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Virtual filesystem | ✅ | InMemoryFs, OverlayFs, MountableFs |
+| Real filesystem | ❌ | Virtual by default |
+| Symlinks | ✅ | Stored but not followed |
+| Permissions | ✅ | Metadata stored, not enforced |
+| `/dev/null` | ✅ | Interpreter-level handling |
+
+## Network
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| HTTP client | ✅ | Full implementation |
+| URL allowlist | ✅ | Default-deny whitelist |
+| `curl` builtin | ✅ | Full HTTP client |
+| `wget` builtin | ✅ | Full downloader |
+| Response limits | ✅ | 10MB max, 30s timeout |
+| Redirect security | ✅ | Requires `-L` and allowlist |
+| Raw sockets | ❌ | Not planned |
+
+## Intentionally Unimplemented
+
+These features conflict with BashKit's stateless, virtual execution model:
+
+| Feature | Rationale |
+|---------|----------|
+| `exec` builtin | Cannot replace shell process in sandbox |
+| Background execution (`&`) | Stateless model - no persistent processes |
+| Job control (`bg`, `fg`, `jobs`) | Requires process state |
+| Symlink following | Prevents symlink loop attacks |
+| Process spawning | External commands run as builtins |
+| Raw network sockets | Only allowlisted HTTP via curl |
+
+## Spec Test Coverage
+
+**Total spec test cases:** 1723
+
+| Category | Cases | Pass | Skip |
+|----------|-------|------|------|
+| Bash (core) | 1305 | 1181 | 124 |
+| AWK | 96 | 96 | 0 |
+| Grep | 76 | 76 | 0 |
+| Sed | 75 | 75 | 0 |
+| JQ | 114 | 109 | 5 |
+| Python | 57 | 49 | 8 |
+| **Total** | **1723** | **1586** | **137** |
+
+## Running Tests
+
+```bash
+# All tests
+cargo test --all-features
+
+# Spec tests only
+cargo test --test spec_tests
+
+# Compare with real bash
+cargo test --test spec_tests -- bash_comparison_tests --ignored
+```
+
+## See Also
+
+- [Built-in Commands](/resources/builtin-commands) - Command reference
+- [Shell Syntax](/resources/shell-syntax) - Syntax guide
+- [POSIX Compliance](/resources/posix-compliance) - POSIX details
+- [Implementation Status](https://github.com/everruns/bashkit/blob/main/specs/009-implementation-status.md) - Detailed status

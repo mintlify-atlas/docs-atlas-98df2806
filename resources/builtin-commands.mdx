@@ -1,0 +1,284 @@
+---
+title: Built-in Commands
+description: Complete reference of 100+ built-in commands in BashKit
+---
+
+BashKit includes over 100 built-in commands organized by category.
+
+## Core Commands
+
+| Command | Description |
+|---------|-------------|
+| `echo` | Output text to stdout |
+| `printf` | Formatted output |
+| `cat` | Concatenate and display files |
+| `nl` | Number lines of files |
+| `read` | Read input into variables |
+
+## Navigation
+
+| Command | Description |
+|---------|-------------|
+| `cd` | Change directory |
+| `pwd` | Print working directory |
+| `ls` | List directory contents |
+| `find` | Search for files |
+| `pushd` | Push directory onto stack |
+| `popd` | Pop directory from stack |
+| `dirs` | Display directory stack |
+
+## Flow Control
+
+| Command | Description |
+|---------|-------------|
+| `true` | Return success (exit 0) |
+| `false` | Return failure (exit 1) |
+| `exit` | Exit shell with status |
+| `return` | Return from function |
+| `break` | Break from loop |
+| `continue` | Continue loop |
+| `test` / `[` | Evaluate conditional expressions |
+
+## Variables
+
+| Command | Description |
+|---------|-------------|
+| `export` | Export variables to environment |
+| `set` | Set shell options and positional parameters |
+| `unset` | Remove variables and functions |
+| `local` | Declare local variables |
+| `shift` | Shift positional parameters |
+| `source` / `.` | Execute commands from file |
+| `eval` | Evaluate and execute arguments |
+| `readonly` | Mark variables as read-only |
+| `times` | Display process times |
+| `declare` / `typeset` | Declare variables with attributes |
+| `let` | Evaluate arithmetic expressions |
+
+## Shell
+
+| Command | Description |
+|---------|-------------|
+| `bash` / `sh` | Virtual bash/sh re-invocation |
+| `:` | Null command (no-op) |
+| `trap` | Signal and event handlers |
+| `caller` | Display call stack frame |
+| `getopts` | Parse positional parameters |
+| `shopt` | Set/unset shell options |
+
+## Text Processing
+
+| Command | Description |
+|---------|-------------|
+| `grep` | Search text using patterns |
+| `sed` | Stream editor |
+| `awk` | Pattern scanning and processing |
+| `jq` | JSON processor |
+| `head` | Output first part of files |
+| `tail` | Output last part of files |
+| `sort` | Sort lines of text |
+| `uniq` | Report or filter duplicate lines |
+| `cut` | Remove sections from lines |
+| `tr` | Translate or delete characters |
+| `wc` | Word, line, character count |
+| `paste` | Merge lines of files |
+| `column` | Columnate lists |
+| `diff` | Compare files line by line |
+| `comm` | Compare sorted files |
+| `strings` | Find printable strings in files |
+| `tac` | Reverse line order |
+| `rev` | Reverse characters per line |
+| `seq` | Generate number sequences |
+| `expr` | Evaluate expressions |
+
+## File Operations
+
+| Command | Description |
+|---------|-------------|
+| `mkdir` | Create directories |
+| `mktemp` | Create temporary files |
+| `rm` | Remove files or directories |
+| `cp` | Copy files and directories |
+| `mv` | Move/rename files |
+| `touch` | Create empty files or update timestamps |
+| `chmod` | Change file permissions |
+| `chown` | Change file owner and group |
+| `ln` | Create links |
+| `rmdir` | Remove empty directories |
+| `realpath` | Resolve canonical path |
+
+## File Inspection
+
+| Command | Description |
+|---------|-------------|
+| `file` | Determine file type |
+| `stat` | Display file metadata |
+| `less` | View file contents |
+
+## Archives
+
+| Command | Description |
+|---------|-------------|
+| `tar` | Archive files |
+| `gzip` | Compress files |
+| `gunzip` | Decompress files |
+
+## Byte Tools
+
+| Command | Description |
+|---------|-------------|
+| `od` | Octal/hex dump |
+| `xxd` | Hex dump |
+| `hexdump` | Display file in hex+ASCII |
+| `base64` | Base64 encode/decode |
+| `md5sum` | Calculate MD5 checksum |
+| `sha1sum` | Calculate SHA1 checksum |
+| `sha256sum` | Calculate SHA256 checksum |
+
+## Utilities
+
+| Command | Description |
+|---------|-------------|
+| `sleep` | Pause execution |
+| `date` | Display or set date and time |
+| `basename` | Strip directory from path |
+| `dirname` | Strip last path component |
+| `timeout` | Run command with time limit |
+| `wait` | Wait for background jobs |
+| `watch` | Execute command periodically |
+| `yes` | Output repeated string |
+| `kill` | Send signals to processes |
+| `bc` | Arbitrary precision calculator |
+
+## Disk
+
+| Command | Description |
+|---------|-------------|
+| `df` | Report filesystem disk space |
+| `du` | Estimate file space usage |
+
+## Pipeline
+
+| Command | Description |
+|---------|-------------|
+| `xargs` | Build and execute commands |
+| `tee` | Write to files and stdout |
+
+## System Info
+
+| Command | Description |
+|---------|-------------|
+| `whoami` | Display virtual username |
+| `hostname` | Display virtual hostname |
+| `uname` | Print system information |
+| `id` | Print user/group IDs |
+| `env` | Print/modify environment |
+| `printenv` | Print environment variables |
+| `history` | Command history |
+
+## Network
+
+| Command | Description |
+|---------|-------------|
+| `curl` | HTTP client (requires allowlist) |
+| `wget` | Download files (requires allowlist) |
+
+## Experimental Features
+
+These commands require enabling specific features:
+
+| Command | Feature | Description |
+|---------|---------|-------------|
+| `python` / `python3` | `python` | Embedded Python interpreter |
+| `git` | `git` | Virtual git operations |
+
+## Command Details
+
+### echo
+
+Output text to stdout.
+
+```bash
+echo hello world
+echo -n "no newline"
+echo -e "escape\tsequences"
+```
+
+### printf
+
+Formatted output with C-style format specifiers.
+
+```bash
+printf "%s %d\n" hello 42
+printf "%.2f" 3.14159
+```
+
+### grep
+
+Search text using patterns.
+
+```bash
+grep pattern file.txt
+grep -i case-insensitive file.txt
+grep -r recursive /path
+```
+
+### sed
+
+Stream editor for text transformation.
+
+```bash
+sed 's/old/new/g' file.txt
+sed -n '1,10p' file.txt
+```
+
+### awk
+
+Pattern scanning and text processing.
+
+```bash
+awk '{print $1}' file.txt
+awk -F: '{print $1}' /etc/passwd
+```
+
+### jq
+
+JSON processor.
+
+```bash
+jq '.field' data.json
+jq -r '.items[] | .name' data.json
+```
+
+### find
+
+Search for files.
+
+```bash
+find /path -name '*.txt'
+find . -type f -maxdepth 2
+```
+
+### tar
+
+Archive operations.
+
+```bash
+tar -czf archive.tar.gz dir/
+tar -xzf archive.tar.gz
+```
+
+### curl
+
+HTTP client (requires network allowlist).
+
+```bash
+curl https://api.example.com/data
+curl -X POST -d '{"key":"value"}' https://api.example.com
+```
+
+## See Also
+
+- [Shell Syntax](/resources/shell-syntax) - Shell language features
+- [Compatibility](/resources/compatibility) - Feature compatibility matrix
+- [Security Model](/resources/security-model) - Security overview

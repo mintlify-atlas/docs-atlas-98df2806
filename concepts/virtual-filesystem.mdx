@@ -1,0 +1,306 @@
+---
+title: Virtual filesystem
+description: Virtual filesystem implementations for sandboxed execution
+---
+
+BashKit uses a virtual filesystem to isolate script execution from the host system. All file operations happen in-memory or against custom storage backends.
+
+## Filesystem Trait
+
+The `FileSystem` trait defines POSIX-like operations:
+
+```rust
+#[async_trait]
+pub trait FileSystem: Send + Sync {
+    // Read operations
+    async fn read_file(&self, path: &Path) -> Result<Vec<u8>>;
+    async fn stat(&self, path: &Path) -> Result<Metadata>;
+    async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>>;
+    async fn exists(&self, path: &Path) -> Result<bool>;
+    async fn read_link(&self, path: &Path) -> Result<PathBuf>;
+
+    // Write operations
+    async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()>;
+    async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()>;
+    async fn mkdir(&self, path: &Path, recursive: bool) -> Result<()>;
+    async fn remove(&self, path: &Path, recursive: bool) -> Result<()>;
+    async fn rename(&self, from: &Path, to: &Path) -> Result<()>;
+    async fn copy(&self, from: &Path, to: &Path) -> Result<()>;
+    async fn symlink(&self, target: &Path, link: &Path) -> Result<()>;
+    async fn chmod(&self, path: &Path, mode: u32) -> Result<()>;
+}
+```
+
+## Built-in Implementations
+
+### InMemoryFs (Default)
+
+HashMap-based in-memory filesystem. Fast and ephemeral.
+
+```rust
+use bashkit::{Bash, InMemoryFs};
+use std::sync::Arc;
+
+let fs = Arc::new(InMemoryFs::new());
+let mut bash = Bash::builder()
+    .fs(fs)
+    .build();
+
+bash.exec("echo 'data' > /tmp/file.txt").await?;
+bash.exec("cat /tmp/file.txt").await?; // "data"
+```
+
+**Characteristics:**
+- Fast (all operations are in-memory)
+- Ephemeral (data lost when dropped)
+- Thread-safe (uses `RwLock`)
+- No disk I/O
+
+**Use cases:**
+- AI agent workflows
+- CI/CD script execution
+- Testing and development
+
+### OverlayFs
+
+Copy-on-write overlay filesystem. Reads from a base layer, writes to an overlay.
+
+```rust
+use bashkit::{OverlayFs, InMemoryFs};
+
+// Base layer (read-only in practice)
+let base = Arc::new(InMemoryFs::new());
+base.write_file(Path::new("/etc/config"), b"base config").await?;
+
+// Overlay layer (writable)
+let overlay = Arc::new(OverlayFs::new(base));
+
+let mut bash = Bash::builder()
+    .fs(overlay.clone())
+    .build();
+
+// Read from base
+bash.exec("cat /etc/config").await?; // "base config"
+
+// Write to overlay
+bash.exec("echo 'modified' > /etc/config").await?;
+
+// Reads from overlay now
+bash.exec("cat /etc/config").await?; // "modified"
+```
+
+**Whiteouts for deletions:**
+
+```rust
+bash.exec("rm /etc/config").await?;
+bash.exec("cat /etc/config").await?; // Error: file not found
+// Base file still exists, but overlay marks it deleted
+```
+
+**Characteristics:**
+- Copy-on-write semantics
+- Base layer remains unchanged
+- Whiteout markers for deletions
+- Useful for template-based execution
+
+**Use cases:**
+- Multi-tenant environments with shared base filesystem
+- Template-based script execution
+- Testing modifications without affecting base
+
+### MountableFs
+
+Unix-style mount points. Different filesystems at different paths.
+
+```rust
+use bashkit::{MountableFs, InMemoryFs};
+
+let root_fs = Arc::new(InMemoryFs::new());
+let mut mountable = MountableFs::new(root_fs);
+
+// Mount a separate filesystem at /data
+let data_fs = Arc::new(InMemoryFs::new());
+mountable.mount("/data", data_fs);
+
+// Mount another at /tmp
+let tmp_fs = Arc::new(InMemoryFs::new());
+mountable.mount("/tmp", tmp_fs);
+
+let mut bash = Bash::builder()
+    .fs(Arc::new(mountable))
+    .build();
+
+bash.exec("echo 'root' > /file.txt").await?;      // Goes to root_fs
+bash.exec("echo 'data' > /data/file.txt").await?; // Goes to data_fs
+bash.exec("echo 'temp' > /tmp/file.txt").await?;  // Goes to tmp_fs
+```
+
+**Mount resolution:**
+
+```
+/data/subdir/file.txt  → /data mount
+/tmp/file.txt          → /tmp mount
+/file.txt              → root filesystem
+```
+
+**Characteristics:**
+- Multiple filesystems in one namespace
+- Longest prefix match for mount resolution
+- Each mount can be a different `FileSystem` implementation
+
+**Use cases:**
+- Separate scratch space from persistent storage
+- Different storage backends for different paths
+- Isolate temporary files
+
+## Metadata
+
+All filesystems track POSIX-like metadata:
+
+```rust
+pub struct Metadata {
+    pub file_type: FileType,      // File, Directory, or Symlink
+    pub size: u64,
+    pub mode: u32,                // Unix permissions (e.g., 0o644)
+    pub modified: SystemTime,
+    pub created: SystemTime,
+}
+
+pub enum FileType {
+    File,
+    Directory,
+    Symlink,
+}
+```
+
+Usage:
+
+```rust
+let meta = fs.stat(Path::new("/tmp/file.txt")).await?;
+println!("Size: {} bytes", meta.size);
+println!("Permissions: {:o}", meta.mode);
+println!("Type: {:?}", meta.file_type);
+```
+
+## Symlinks
+
+<Warning>
+Symlinks are stored but **not followed** during path resolution. This prevents symlink loop attacks and sandbox escapes.
+</Warning>
+
+Symlink behavior:
+
+```rust
+bash.exec("ln -s /etc/passwd /tmp/link").await?;
+
+// Symlink is created
+let meta = fs.stat(Path::new("/tmp/link")).await?;
+assert_eq!(meta.file_type, FileType::Symlink);
+
+// read_link returns target
+let target = fs.read_link(Path::new("/tmp/link")).await?;
+assert_eq!(target, Path::new("/etc/passwd"));
+
+// But reading the symlink file itself fails (not followed)
+bash.exec("cat /tmp/link").await?; // Error: Is a symlink
+```
+
+Rationale (from `specs/009-implementation-status.md:36-38`):
+- Prevents infinite loops (`a -> b -> a`)
+- Blocks sandbox escapes (`link -> /etc/passwd`)
+- Simplifies security model
+
+## Custom Implementations
+
+Implement `FileSystem` to use custom storage:
+
+```rust
+use bashkit::{FileSystem, Metadata, DirEntry, Result};
+use async_trait::async_trait;
+
+struct S3Fs {
+    bucket: String,
+    client: S3Client,
+}
+
+#[async_trait]
+impl FileSystem for S3Fs {
+    async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        // Read from S3
+        let key = path.to_str().unwrap();
+        let obj = self.client.get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await?;
+        // ... convert to Vec<u8>
+    }
+
+    async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+        // Write to S3
+        let key = path.to_str().unwrap();
+        self.client.put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .body(content.to_vec().into())
+            .send()
+            .await?;
+        Ok(())
+    }
+
+    // ... implement other methods
+}
+
+// Use it
+let s3_fs = Arc::new(S3Fs::new("my-bucket"));
+let mut bash = Bash::builder()
+    .fs(s3_fs)
+    .build();
+```
+
+## Mounting Files
+
+The builder provides shortcuts for mounting individual files:
+
+```rust
+let mut bash = Bash::builder()
+    .mount_file("/etc/config", "config content")
+    .mount_file_readonly("/etc/immutable", "read-only content")
+    .build();
+
+bash.exec("cat /etc/config").await?;      // "config content"
+bash.exec("echo x > /etc/config").await?; // OK (writable)
+bash.exec("echo x > /etc/immutable").await?; // Error: read-only
+```
+
+See [Configuration guide](/guides/configuration) for details.
+
+## Thread Safety
+
+All `FileSystem` implementations are `Send + Sync` and can be shared across threads:
+
+```rust
+let fs = Arc::new(InMemoryFs::new());
+
+let fs_clone = Arc::clone(&fs);
+tokio::spawn(async move {
+    fs_clone.write_file(Path::new("/tmp/file"), b"data").await.unwrap();
+});
+
+let fs_clone2 = Arc::clone(&fs);
+tokio::spawn(async move {
+    let content = fs_clone2.read_file(Path::new("/tmp/file")).await.unwrap();
+});
+```
+
+<Note>
+All filesystems use internal locking (`RwLock`) for thread safety. Write operations are serialized, but read operations can happen concurrently.
+</Note>
+
+## See Also
+
+- [FileSystem API reference](/api/filesystem)
+- [InMemoryFs reference](/api/in-memory-fs)
+- [OverlayFs reference](/api/overlay-fs)
+- [MountableFs reference](/api/mountable-fs)
+- [Configuration guide](/guides/configuration)

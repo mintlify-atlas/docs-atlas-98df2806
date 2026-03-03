@@ -1,0 +1,135 @@
+---
+title: Quick Start
+description: Get started with BashKit in minutes
+---
+
+BashKit provides a sandboxed bash interpreter for AI agents. All commands run in-process with a virtual filesystem—no containers needed.
+
+## Basic Usage
+
+<Tabs>
+  <Tab title="Async">
+    ```python
+    import asyncio
+    from bashkit import Bash
+
+    async def main():
+        bash = Bash()
+
+        # Simple command
+        result = await bash.execute("echo 'Hello, World!'")
+        print(result.stdout)  # Hello, World!
+
+        # Pipeline
+        result = await bash.execute("echo -e 'banana\\napple\\ncherry' | sort")
+        print(result.stdout)  # apple\nbanana\ncherry
+
+        # Virtual filesystem persists between calls
+        await bash.execute("echo 'data' > /tmp/file.txt")
+        result = await bash.execute("cat /tmp/file.txt")
+        print(result.stdout)  # data
+
+    asyncio.run(main())
+    ```
+  </Tab>
+  
+  <Tab title="Sync">
+    ```python
+    from bashkit import BashTool
+
+    tool = BashTool()
+    result = tool.execute_sync("echo 'Hello, World!'")
+    print(result.stdout)  # Hello, World!
+
+    # Pipeline
+    result = tool.execute_sync("echo -e 'banana\\napple\\ncherry' | sort")
+    print(result.stdout)  # apple\nbanana\ncherry
+
+    # Virtual filesystem persists
+    tool.execute_sync("echo 'data' > /tmp/file.txt")
+    result = tool.execute_sync("cat /tmp/file.txt")
+    print(result.stdout)  # data
+    ```
+  </Tab>
+</Tabs>
+
+## Key Features
+
+### Sandboxed Execution
+
+All commands run in isolation with a virtual filesystem:
+
+```python
+from bashkit import Bash
+
+bash = Bash()
+
+# Create files in virtual filesystem
+result = bash.execute_sync("echo 'test' > /tmp/data.txt")
+result = bash.execute_sync("cat /tmp/data.txt")
+print(result.stdout)  # test
+```
+
+### 68+ Built-in Commands
+
+Includes common utilities: `echo`, `cat`, `grep`, `sed`, `awk`, `jq`, `curl`, `find`, and more.
+
+```python
+result = bash.execute_sync("echo '{\"name\": \"Alice\"}' | jq -r '.name'")
+print(result.stdout)  # Alice
+```
+
+### Full Bash Syntax
+
+Supports variables, pipelines, redirects, loops, functions, and arrays:
+
+```python
+result = bash.execute_sync("""
+    total=0
+    for i in 1 2 3 4 5; do
+        total=$((total + i))
+    done
+    echo $total
+""")
+print(result.stdout)  # 15
+```
+
+### Resource Limits
+
+Protect against infinite loops and runaway scripts:
+
+```python
+bash = Bash(
+    max_commands=1000,
+    max_loop_iterations=10000
+)
+```
+
+## Choosing Between Bash and BashTool
+
+**Use `Bash`** for direct command execution:
+- Core interpreter functionality
+- Minimal overhead
+- When you don't need tool metadata
+
+**Use `BashTool`** when integrating with AI frameworks:
+- Includes LLM tool metadata (schema, description, system prompt)
+- Ready for LangChain, PydanticAI, and other frameworks
+- Wraps `Bash` with additional convenience methods
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Basic Usage" icon="code" href="/python/basic-usage">
+    Learn core patterns and best practices
+  </Card>
+  <Card title="Configuration" icon="gear" href="/python/configuration">
+    Customize behavior and resource limits
+  </Card>
+  <Card title="LangChain Integration" icon="link" href="/python/langchain">
+    Use BashKit with LangChain agents
+  </Card>
+  <Card title="API Reference" icon="book" href="/python/api/bash">
+    Explore the full API
+  </Card>
+</CardGroup>

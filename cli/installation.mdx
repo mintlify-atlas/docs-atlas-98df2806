@@ -1,0 +1,43 @@
+---
+title: Installation
+description: Installing the bashkit CLI tool
+---
+
+## Install from Source
+
+Bashkit CLI is written in Rust and can be installed via cargo:
+
+```bash
+cargo install bashkit-cli
+```
+
+This will download, compile, and install the `bashkit` binary to your cargo bin directory (typically `~/.cargo/bin/`).
+
+## Verify Installation
+
+Check that bashkit is installed and available in your PATH:
+
+```bash
+bashkit --version
+```
+
+```
+bashkit 0.1.0
+```
+
+## Build from Source
+
+To build from the repository:
+
+```bash
+git clone https://github.com/your-org/bashkit
+cd bashkit
+cargo build --release -p bashkit-cli
+```
+
+The binary will be available at `target/release/bashkit`.
+
+## Requirements
+
+- Rust toolchain (1.70 or later recommended)
+- Cargo package manager

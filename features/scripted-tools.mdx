@@ -1,0 +1,419 @@
+---
+title: Scripted Tool Orchestration
+description: Compose multiple tools into a single bash-scriptable interface for LLM agents
+---
+
+Scripted Tool Orchestration lets you compose multiple tool definitions (`ToolDef`) and callbacks into a single `ScriptedTool` that accepts bash scripts. Each sub-tool becomes a builtin command, allowing LLMs to orchestrate N tools in one call using pipes, variables, loops, and conditionals.
+
+## Motivation
+
+When an LLM has access to many tools (`get_user`, `list_orders`, `get_inventory`, etc.), each tool call is a separate round-trip. A data-gathering task that needs 5 tools requires 5+ turns.
+
+With `ScriptedTool`, the LLM writes a single bash script that calls all tools, pipes results through `jq`, and returns composed output — reducing latency and token cost.
+
+## Quick Start
+
+Enable the `scripted_tool` feature:
+
+```toml
+[dependencies]
+bashkit = { version = "0.1", features = ["scripted_tool"] }
+```
+
+Build a scripted tool:
+
+```rust
+use bashkit::{ScriptedTool, ToolDef, ToolArgs};
+use serde_json::json;
+
+let mut tool = ScriptedTool::builder("api_name")
+    .short_description("E-commerce API orchestrator")
+    .tool(
+        ToolDef::new("get_user", "Fetch user by ID")
+            .with_schema(json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "description": "User ID"}
+                },
+                "required": ["id"]
+            })),
+        |args: &ToolArgs| {
+            let id = args.param_i64("id").ok_or("missing --id")?;
+            Ok(format!("{{\"id\":{id},\"name\":\"Alice\"}}"))
+        },
+    )
+    .build();
+```
+
+## API Reference
+
+### ToolDef - OpenAPI-style Tool Definition
+
+Defines a tool's name, description, and input schema:
+
+```rust
+pub struct ToolDef {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,  // JSON Schema, empty object if unset
+}
+
+impl ToolDef {
+    pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self;
+    pub fn with_schema(self, schema: serde_json::Value) -> Self;
+}
+```
+
+**Example:**
+
+```rust
+let def = ToolDef::new("get_user", "Fetch user by ID")
+    .with_schema(json!({
+        "type": "object",
+        "properties": {
+            "id": {"type": "integer"}
+        },
+        "required": ["id"]
+    }));
+```
+
+### ToolArgs - Parsed Arguments
+
+Arguments passed to callbacks with typed accessors:
+
+```rust
+pub struct ToolArgs {
+    pub params: serde_json::Value,  // JSON object from --key value flags
+    pub stdin: Option<String>,      // pipeline input from prior command
+}
+
+impl ToolArgs {
+    pub fn param_str(&self, key: &str) -> Option<&str>;
+    pub fn param_i64(&self, key: &str) -> Option<i64>;
+    pub fn param_f64(&self, key: &str) -> Option<f64>;
+    pub fn param_bool(&self, key: &str) -> Option<bool>;
+}
+```
+
+**Example:**
+
+```rust
+let callback = |args: &ToolArgs| {
+    let id = args.param_i64("id").ok_or("missing --id")?;
+    let name = args.param_str("name").unwrap_or("unknown");
+    Ok(format!("User {id}: {name}"))
+};
+```
+
+### ToolCallback - Execution Handler
+
+```rust
+pub type ToolCallback =
+    Arc<dyn Fn(&ToolArgs) -> Result<String, String> + Send + Sync>;
+```
+
+Callbacks receive parsed arguments and return:
+- `Ok(String)` - stdout output
+- `Err(String)` - error message (stderr)
+
+### ScriptedToolBuilder
+
+Compose tools with configuration:
+
+```rust
+impl ScriptedToolBuilder {
+    pub fn short_description(self, desc: impl Into<String>) -> Self;
+    pub fn tool(self, def: ToolDef, callback: impl Fn(&ToolArgs) -> Result<String, String> + Send + Sync + 'static) -> Self;
+    pub fn env(self, key: impl Into<String>, value: impl Into<String>) -> Self;
+    pub fn limits(self, limits: ExecutionLimits) -> Self;
+    pub fn build(self) -> ScriptedTool;
+}
+```
+
+**Example:**
+
+```rust
+let tool = ScriptedTool::builder("ecommerce")
+    .short_description("E-commerce API tools")
+    .tool(get_user_def(), get_user_callback)
+    .tool(list_orders_def(), list_orders_callback)
+    .env("API_KEY", "secret")
+    .limits(ExecutionLimits::new().max_commands(500))
+    .build();
+```
+
+## Flag Parsing
+
+Bash command arguments are parsed into JSON according to the tool's schema:
+
+| Syntax | Schema Type | Result |
+|--------|-------------|--------|
+| `--id 42` | `integer` | `{"id": 42}` |
+| `--id=42` | `integer` | `{"id": 42}` |
+| `--verbose` | `boolean` | `{"verbose": true}` |
+| `--name Alice` | `string` | `{"name": "Alice"}` |
+| `--price 19.99` | `number` | `{"price": 19.99}` |
+
+Type coercion follows the `input_schema` property types: `integer`, `number`, `boolean`, `string`. Unknown flags (not in schema) are kept as strings.
+
+## Usage Patterns
+
+### Single Tool Call
+
+```bash
+get_user --id 1
+```
+
+### Pipeline with jq
+
+```bash
+get_user --id 1 | jq -r '.name'
+```
+
+### Multi-step Orchestration
+
+```bash
+user=$(get_user --id 1)
+name=$(echo "$user" | jq -r '.name')
+tier=$(echo "$user" | jq -r '.tier')
+orders=$(list_orders --user_id 1)
+total=$(echo "$orders" | jq '[.[].price] | add')
+echo "Customer: $name (tier: $tier)"
+echo "Total spent: $total"
+```
+
+### Loops and Conditionals
+
+```bash
+for uid in 1 2 3; do
+    user=$(get_user --id $uid)
+    tier=$(echo "$user" | jq -r '.tier')
+    if [ "$tier" = "premium" ]; then
+        echo "Creating discount for user $uid"
+        create_discount --user_id $uid --percent 20
+    fi
+done
+```
+
+### Error Handling
+
+```bash
+for item in Laptop Mouse Widget; do
+    result=$(get_inventory --item "$item")
+    stock=$(echo "$result" | jq '.in_stock')
+    if [ "$stock" -eq 0 ]; then
+        echo "$item: OUT OF STOCK"
+    else
+        echo "$item: $stock in stock"
+    fi
+done
+```
+
+## Complete Example
+
+Here's a full e-commerce API orchestrator:
+
+```rust
+use bashkit::{ScriptedTool, ToolDef, ToolArgs, Tool, ToolRequest};
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut tool = ScriptedTool::builder("ecommerce_api")
+        .short_description("E-commerce API orchestrator")
+        .tool(
+            ToolDef::new("get_user", "Fetch user by ID")
+                .with_schema(json!({
+                    "type": "object",
+                    "properties": {"id": {"type": "integer"}},
+                    "required": ["id"]
+                })),
+            |args: &ToolArgs| {
+                let id = args.param_i64("id").ok_or("missing --id")?;
+                let users = [
+                    (1, "Alice", "premium"),
+                    (2, "Bob", "basic"),
+                ];
+                match users.iter().find(|(uid, ..)| *uid == id) {
+                    Some((uid, name, tier)) => {
+                        Ok(format!("{{\"id\":{uid},\"name\":\"{name}\",\"tier\":\"{tier}\"}}"))
+                    }
+                    None => Err(format!("user {} not found", id)),
+                }
+            },
+        )
+        .tool(
+            ToolDef::new("list_orders", "List orders for a user")
+                .with_schema(json!({
+                    "type": "object",
+                    "properties": {"user_id": {"type": "integer"}},
+                    "required": ["user_id"]
+                })),
+            |args: &ToolArgs| {
+                let uid = args.param_i64("user_id").ok_or("missing --user_id")?;
+                let orders = match uid {
+                    1 => r#"[{"order_id":101,"item":"Laptop","price":999.99}]"#,
+                    2 => r#"[{"order_id":201,"item":"Mouse","price":29.99}]"#,
+                    _ => return Err(format!("no orders for user {}", uid)),
+                };
+                Ok(format!("{orders}"))
+            },
+        )
+        .build();
+
+    // Execute a multi-step script
+    let script = r#"
+        user=$(get_user --id 1)
+        name=$(echo "$user" | jq -r '.name')
+        orders=$(list_orders --user_id 1)
+        total=$(echo "$orders" | jq '[.[].price] | add')
+        echo "Customer: $name"
+        echo "Total spent: $total"
+    "#;
+
+    let response = tool.execute(ToolRequest {
+        commands: script.to_string(),
+        timeout_ms: None,
+    }).await;
+
+    println!("{}", response.stdout);
+    Ok(())
+}
+```
+
+**Output:**
+
+```
+Customer: Alice
+Total spent: 999.99
+```
+
+## LLM Integration
+
+The `system_prompt()` method generates markdown documentation for LLMs:
+
+```markdown
+# ecommerce_api
+
+Input: {"commands": "<bash script>"}
+Output: {stdout, stderr, exit_code}
+
+## Available tool commands
+
+- `get_user`: Fetch user by ID
+  Usage: `get_user --id <integer>`
+- `list_orders`: List orders for user
+  Usage: `list_orders --user_id <integer>`
+
+## Tips
+
+- Pass arguments as `--key value` or `--key=value` flags
+- Pipe tool output through `jq` for JSON processing
+- Use variables to pass data between tool calls
+```
+
+This is automatically included in the system message when using the Tool trait.
+
+## Security
+
+Scripted tools inherit all BashKit sandbox guarantees:
+
+- **Virtual filesystem** - No host access
+- **Resource limits** - Max commands, loop iterations, function depth
+- **No network access** - Unless explicitly configured
+
+Sub-tool callback implementations control their own security boundaries. Ensure callbacks validate input and handle errors appropriately.
+
+## Advanced Features
+
+### Environment Variables
+
+```rust
+let tool = ScriptedTool::builder("api")
+    .env("API_KEY", "secret")
+    .env("BASE_URL", "https://api.example.com")
+    .tool(def, callback)
+    .build();
+```
+
+Access in scripts:
+
+```bash
+echo "Using API: $BASE_URL"
+```
+
+### Execution Limits
+
+```rust
+use bashkit::ExecutionLimits;
+
+let tool = ScriptedTool::builder("api")
+    .limits(
+        ExecutionLimits::new()
+            .max_commands(500)
+            .max_loop_iterations(100)
+    )
+    .tool(def, callback)
+    .build();
+```
+
+### Pipeline Input (stdin)
+
+Callbacks can access pipeline input:
+
+```rust
+let callback = |args: &ToolArgs| {
+    if let Some(stdin) = &args.stdin {
+        // Process piped data
+        Ok(format!("Received: {stdin}"))
+    } else {
+        // No pipeline input
+        Ok("No input".to_string())
+    }
+};
+```
+
+Usage:
+
+```bash
+echo "data" | process_stdin
+```
+
+## Examples
+
+See `crates/bashkit/examples/scripted_tool.rs` for a complete working example with multiple tools, orchestration patterns, and error handling.
+
+Run the example:
+
+```bash
+cargo run --example scripted_tool --features scripted_tool
+```
+
+## Testing
+
+The module includes 31 unit tests covering:
+
+- Builder configuration
+- Introspection (help, system_prompt, schemas)
+- Flag parsing and type coercion
+- Single tool execution
+- Pipelines with jq
+- Multi-step orchestration
+- Error handling and fallback
+- Stdin piping
+- Loops and conditionals
+- Environment variables
+- Multiple sequential executions (Arc reuse)
+
+Run tests:
+
+```bash
+cargo test --features scripted_tool
+```
+
+## See Also
+
+- [Tool Trait](/api/tool-trait) - Tool contract and lifecycle
+- [Execution Limits](/core/limits) - Resource constraints
+- [Virtual Filesystem](/core/virtual-filesystem) - VFS implementation
+- [Custom Builtins](/core/builtins) - Writing custom builtins

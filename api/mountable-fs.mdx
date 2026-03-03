@@ -1,0 +1,413 @@
+---
+title: MountableFs
+description: Filesystem with Unix-style mount points
+---
+
+## Overview
+
+`MountableFs` allows mounting different filesystem implementations at specific paths, similar to how Unix systems mount devices at directories.
+
+## Features
+
+- **Multiple mount points**: Mount different filesystems at different paths
+- **Nested mounts**: Mount filesystems within other mounts (longest-prefix matching)
+- **Dynamic mounting**: Add/remove mounts at runtime
+- **Cross-mount operations**: Copy/move files between different mounted filesystems
+
+## Use Cases
+
+- **Hybrid storage**: Combine in-memory temp storage with persistent data stores
+- **Multi-tenant isolation**: Mount separate filesystems for different tenants
+- **Plugin systems**: Each plugin gets its own mounted filesystem
+- **Testing**: Mount mock filesystems for specific paths
+
+## Creating a MountableFs
+
+### `new()`
+
+Create with a root filesystem.
+
+```rust
+pub fn new(root: Arc<dyn FileSystem>) -> Self
+```
+
+<ParamField path="root" type="Arc<dyn FileSystem>" required>
+  Root filesystem for paths not covered by any mount
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{InMemoryFs, MountableFs};
+use std::sync::Arc;
+
+let root = Arc::new(InMemoryFs::new());
+let mountable = MountableFs::new(root);
+```
+
+## Mounting Filesystems
+
+### `mount()`
+
+Mount a filesystem at a specific path.
+
+```rust
+pub fn mount(&self, path: impl AsRef<Path>, fs: Arc<dyn FileSystem>) -> Result<()>
+```
+
+<ParamField path="path" type="impl AsRef<Path>" required>
+  Mount point (must be absolute path)
+</ParamField>
+
+<ParamField path="fs" type="Arc<dyn FileSystem>" required>
+  Filesystem to mount
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, MountableFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let root = Arc::new(InMemoryFs::new());
+    let data_fs = Arc::new(InMemoryFs::new());
+    
+    // Pre-populate data filesystem
+    data_fs.write_file(Path::new("/users.json"), br#"["alice", "bob"]"#).await?;
+    
+    let mountable = MountableFs::new(root);
+    
+    // Mount at /mnt/data
+    mountable.mount("/mnt/data", data_fs)?;
+    
+    // Access mounted filesystem
+    let content = mountable.read_file(Path::new("/mnt/data/users.json")).await?;
+    assert!(std::str::from_utf8(&content).unwrap().contains("alice"));
+    
+    Ok(())
+}
+```
+
+### `unmount()`
+
+Remove a mounted filesystem.
+
+```rust
+pub fn unmount(&self, path: impl AsRef<Path>) -> Result<()>
+```
+
+<ParamField path="path" type="impl AsRef<Path>" required>
+  Mount point to unmount
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, MountableFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let root = Arc::new(InMemoryFs::new());
+    let plugin = Arc::new(InMemoryFs::new());
+    plugin.write_file(Path::new("/lib.so"), b"binary").await?;
+    
+    let mountable = MountableFs::new(root);
+    mountable.mount("/plugin", plugin)?;
+    
+    // File accessible
+    assert!(mountable.exists(Path::new("/plugin/lib.so")).await?);
+    
+    // Unmount
+    mountable.unmount("/plugin")?;
+    
+    // No longer accessible
+    assert!(!mountable.exists(Path::new("/plugin/lib.so")).await?);
+    
+    Ok(())
+}
+```
+
+## Usage Examples
+
+### Basic Mounting
+
+```rust
+use bashkit::{Bash, FileSystem, InMemoryFs, MountableFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    // Create filesystems
+    let root = Arc::new(InMemoryFs::new());
+    let data_fs = Arc::new(InMemoryFs::new());
+    
+    // Pre-populate data
+    data_fs.write_file(Path::new("/users.json"), br#"["alice", "bob"]"#).await?;
+    
+    // Create mountable and mount
+    let mountable = MountableFs::new(root.clone());
+    mountable.mount("/mnt/data", data_fs.clone())?;
+    
+    // Use with Bash
+    let mut bash = Bash::builder().fs(Arc::new(mountable)).build();
+    
+    // Access mounted filesystem
+    let result = bash.exec("cat /mnt/data/users.json").await?;
+    assert!(result.stdout.contains("alice"));
+    
+    // Access root filesystem
+    bash.exec("echo hello > /root.txt").await?;
+    
+    Ok(())
+}
+```
+
+### Nested Mounts
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, MountableFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let root = Arc::new(InMemoryFs::new());
+    let outer = Arc::new(InMemoryFs::new());
+    let inner = Arc::new(InMemoryFs::new());
+    
+    outer.write_file(Path::new("/outer.txt"), b"outer").await?;
+    inner.write_file(Path::new("/inner.txt"), b"inner").await?;
+    
+    let mountable = MountableFs::new(root);
+    mountable.mount("/mnt", outer)?;
+    mountable.mount("/mnt/nested", inner)?;  // Nested mount
+    
+    // Access outer mount
+    let content = mountable.read_file(Path::new("/mnt/outer.txt")).await?;
+    assert_eq!(content, b"outer");
+    
+    // Access nested mount (longest-prefix matching)
+    let content = mountable.read_file(Path::new("/mnt/nested/inner.txt")).await?;
+    assert_eq!(content, b"inner");
+    
+    Ok(())
+}
+```
+
+### Multi-Tenant Isolation
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, MountableFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let root = Arc::new(InMemoryFs::new());
+    let mountable = MountableFs::new(root);
+    
+    // Mount separate filesystem for each tenant
+    let tenant_a = Arc::new(InMemoryFs::new());
+    let tenant_b = Arc::new(InMemoryFs::new());
+    
+    mountable.mount("/tenants/a", tenant_a)?;
+    mountable.mount("/tenants/b", tenant_b)?;
+    
+    // Tenants have isolated storage
+    mountable.write_file(Path::new("/tenants/a/data.txt"), b"A's data").await?;
+    mountable.write_file(Path::new("/tenants/b/data.txt"), b"B's data").await?;
+    
+    let a_data = mountable.read_file(Path::new("/tenants/a/data.txt")).await?;
+    let b_data = mountable.read_file(Path::new("/tenants/b/data.txt")).await?;
+    
+    assert_eq!(a_data, b"A's data");
+    assert_eq!(b_data, b"B's data");
+    
+    Ok(())
+}
+```
+
+### Plugin System
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, MountableFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let root = Arc::new(InMemoryFs::new());
+    let mountable = MountableFs::new(root);
+    
+    // Each plugin gets its own filesystem
+    let plugin1 = Arc::new(InMemoryFs::new());
+    let plugin2 = Arc::new(InMemoryFs::new());
+    
+    plugin1.write_file(Path::new("/init.sh"), b"#!/bin/bash\necho plugin1").await?;
+    plugin2.write_file(Path::new("/init.sh"), b"#!/bin/bash\necho plugin2").await?;
+    
+    mountable.mount("/plugins/plugin1", plugin1)?;
+    mountable.mount("/plugins/plugin2", plugin2)?;
+    
+    // Each plugin is isolated
+    let p1 = mountable.read_file(Path::new("/plugins/plugin1/init.sh")).await?;
+    let p2 = mountable.read_file(Path::new("/plugins/plugin2/init.sh")).await?;
+    
+    assert!(std::str::from_utf8(&p1).unwrap().contains("plugin1"));
+    assert!(std::str::from_utf8(&p2).unwrap().contains("plugin2"));
+    
+    Ok(())
+}
+```
+
+## Path Resolution
+
+`MountableFs` uses longest-prefix matching:
+
+```rust
+// With mounts at /mnt and /mnt/data:
+
+// /mnt/file.txt → /mnt mount
+// /mnt/data/file.txt → /mnt/data mount (longer prefix)
+// /other/file.txt → root filesystem
+```
+
+**Example:**
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, MountableFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let root = Arc::new(InMemoryFs::new());
+    let mnt = Arc::new(InMemoryFs::new());
+    let data = Arc::new(InMemoryFs::new());
+    
+    mnt.write_file(Path::new("/mnt-file.txt"), b"from /mnt").await?;
+    data.write_file(Path::new("/data-file.txt"), b"from /mnt/data").await?;
+    
+    let mountable = MountableFs::new(root);
+    mountable.mount("/mnt", mnt)?;
+    mountable.mount("/mnt/data", data)?;
+    
+    // Longest prefix wins
+    let content = mountable.read_file(Path::new("/mnt/mnt-file.txt")).await?;
+    assert_eq!(content, b"from /mnt");
+    
+    let content = mountable.read_file(Path::new("/mnt/data/data-file.txt")).await?;
+    assert_eq!(content, b"from /mnt/data");
+    
+    Ok(())
+}
+```
+
+## Cross-Mount Operations
+
+### Copy Between Mounts
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, MountableFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let root = Arc::new(InMemoryFs::new());
+    let mount_a = Arc::new(InMemoryFs::new());
+    let mount_b = Arc::new(InMemoryFs::new());
+    
+    mount_a.write_file(Path::new("/data.txt"), b"source data").await?;
+    
+    let mountable = MountableFs::new(root);
+    mountable.mount("/a", mount_a)?;
+    mountable.mount("/b", mount_b)?;
+    
+    // Copy across mounts
+    mountable.copy(Path::new("/a/data.txt"), Path::new("/b/data.txt")).await?;
+    
+    let content = mountable.read_file(Path::new("/b/data.txt")).await?;
+    assert_eq!(content, b"source data");
+    
+    Ok(())
+}
+```
+
+### Rename Across Mounts
+
+```rust
+// Rename across different mounts (copy + delete)
+mountable.rename(Path::new("/a/file.txt"), Path::new("/b/file.txt")).await?;
+```
+
+## Directory Listing with Mounts
+
+Mount points appear in directory listings:
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, MountableFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let root = Arc::new(InMemoryFs::new());
+    let mounted = Arc::new(InMemoryFs::new());
+    
+    let mountable = MountableFs::new(root);
+    mountable.mount("/mnt", mounted)?;
+    
+    // Root directory shows mount point
+    let entries = mountable.read_dir(Path::new("/")).await?;
+    let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains(&"mnt"));
+    
+    Ok(())
+}
+```
+
+## Resource Tracking
+
+### Aggregate Usage
+
+`usage()` aggregates stats from root and all mounts:
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, MountableFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let root = Arc::new(InMemoryFs::new());
+    let mount1 = Arc::new(InMemoryFs::new());
+    let mount2 = Arc::new(InMemoryFs::new());
+    
+    root.write_file(Path::new("/root.txt"), &[0u8; 100]).await?;
+    mount1.write_file(Path::new("/file1.txt"), &[0u8; 200]).await?;
+    mount2.write_file(Path::new("/file2.txt"), &[0u8; 300]).await?;
+    
+    let mountable = MountableFs::new(root);
+    mountable.mount("/m1", mount1)?;
+    mountable.mount("/m2", mount2)?;
+    
+    let usage = mountable.usage();
+    // Total = 100 + 200 + 300 + system files
+    assert!(usage.total_bytes >= 600);
+    
+    Ok(())
+}
+```
+
+## See Also
+
+- [FileSystem](/api/filesystem) - Trait specification
+- [InMemoryFs](/api/in-memory-fs) - In-memory filesystem
+- [OverlayFs](/api/overlay-fs) - Copy-on-write overlay

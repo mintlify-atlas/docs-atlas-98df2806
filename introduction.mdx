@@ -1,0 +1,115 @@
+---
+title: Introduction
+description: BashKit is a virtual bash interpreter designed for multi-tenant environments with sandboxed execution, POSIX compliance, and zero host filesystem access.
+---
+
+BashKit is a virtual bash interpreter for multi-tenant environments. Written in Rust, it provides sandboxed, in-process execution with a virtual filesystem, making it ideal for AI agents, CI/CD pipelines, code sandboxes, and any scenario where you need to run untrusted bash scripts safely.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running with BashKit in under 5 minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Add BashKit to your Rust project with cargo
+  </Card>
+  <Card title="API Reference" icon="code" href="https://docs.rs/bashkit">
+    Complete API documentation on docs.rs
+  </Card>
+  <Card title="GitHub" icon="github" href="https://github.com/everruns/bashkit">
+    View source code and contribute
+  </Card>
+</CardGroup>
+
+## What is BashKit?
+
+BashKit provides a complete bash interpreter that runs entirely in-memory with no access to the host filesystem by default. All file operations happen in a virtual filesystem, all network access is controlled by allowlists, and resource limits prevent runaway scripts.
+
+```rust
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut bash = Bash::new();
+    let result = bash.exec("echo 'Hello, World!'").await?;
+    println!("{}", result.stdout); // "Hello, World!\n"
+    Ok(())
+}
+```
+
+## Key features
+
+### POSIX compliance
+Substantial IEEE 1003.1-2024 Shell Command Language compliance with support for variables, pipelines, redirections, control flow, functions, arrays, and glob expansion.
+
+### Sandboxed execution
+No real filesystem access by default. All operations are confined to an in-memory virtual filesystem with configurable resource limits.
+
+### Virtual filesystem
+Multiple filesystem implementations: `InMemoryFs` for simple in-memory storage, `OverlayFs` for copy-on-write layering, and `MountableFs` for mounting multiple filesystems at different paths.
+
+### 100+ built-in commands
+Core commands (`echo`, `cat`, `grep`, `sed`, `awk`, `jq`), file operations (`mkdir`, `rm`, `cp`, `mv`), text processing (`head`, `tail`, `sort`, `cut`, `tr`), archives (`tar`, `gzip`), and network commands (`curl`, `wget` with allowlist).
+
+### Resource limits
+Control command count, loop iterations, function depth, parser timeout, and more to prevent denial of service.
+
+### Network allowlist
+HTTP access via `curl` and `wget` requires explicit domain allowlisting, preventing unauthorized network access.
+
+### Async-first
+Built on tokio for efficient async execution in multi-tenant environments.
+
+### Experimental features
+
+<CardGroup cols={2}>
+  <Card title="Git support" icon="git">
+    Virtual git operations on the virtual filesystem with the `git` feature flag
+  </Card>
+  <Card title="Python support" icon="python">
+    Embedded Python 3.12 interpreter via Monty with the `python` feature flag
+  </Card>
+</CardGroup>
+
+## Use cases
+
+**AI agents**: Provide bash execution capabilities to LLMs safely without host filesystem access.
+
+**CI/CD pipelines**: Run build scripts and tests in isolated environments.
+
+**Code sandboxes**: Execute user-submitted bash scripts securely.
+
+**Multi-tenant platforms**: Run scripts from different users without cross-contamination.
+
+**Testing**: Test bash scripts in a controlled, reproducible environment.
+
+## Shell features
+
+BashKit supports a comprehensive set of bash features:
+
+- Variables and parameter expansion (`$VAR`, `${VAR:-default}`, `${#VAR}`)
+- Command substitution (`$(cmd)`)
+- Arithmetic expansion (`$((1 + 2))`)
+- Pipelines and redirections (`|`, `>`, `>>`, `<`, `<<<`, `2>&1`)
+- Control flow (`if`/`elif`/`else`, `for`, `while`, `case`)
+- Functions (POSIX and bash-style)
+- Arrays (`arr=(a b c)`, `${arr[@]}`, `${#arr[@]}`)
+- Glob expansion (`*`, `?`)
+- Here documents (`<<EOF`)
+
+## Next steps
+
+<Steps>
+  <Step title="Get started">
+    Follow the [quickstart guide](/quickstart) to run your first BashKit script
+  </Step>
+  <Step title="Install">
+    Add BashKit to your project with the [installation guide](/installation)
+  </Step>
+  <Step title="Explore the API">
+    Check out the [API documentation](https://docs.rs/bashkit) for advanced features
+  </Step>
+</Steps>
+
+## Built by Everruns
+
+BashKit is part of the [Everruns](https://everruns.com) ecosystem.

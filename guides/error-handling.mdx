@@ -1,0 +1,468 @@
+---
+title: Error Handling
+description: Error types and strategies for handling failures in BashKit
+---
+
+BashKit provides structured error types for different failure modes. All error messages are designed to be safe for display to end users without exposing internal details or sensitive information.
+
+## Error Types
+
+BashKit uses a single `Error` enum with variants for different error categories:
+
+### Parse Errors
+
+Occur when the script cannot be parsed:
+
+```rust
+use bashkit::{Bash, Error};
+
+let mut bash = Bash::new();
+let result = bash.exec("if true then echo bad").await;
+
+match result {
+    Err(Error::Parse(msg)) => println!("Parse error: {}", msg),
+    _ => {}
+}
+```
+
+Source: `crates/bashkit/src/error.rs:20-22`
+
+#### Parse Errors with Location
+
+Some parse errors include line and column information:
+
+```rust
+match result {
+    Err(Error::ParseAt { message, line, column }) => {
+        println!("Parse error at line {}, column {}: {}", line, column, message);
+    }
+    _ => {}
+}
+```
+
+Source: `crates/bashkit/src/error.rs:24-30`
+
+### Execution Errors
+
+Occur during script execution:
+
+```rust
+let result = bash.exec("nonexistent_command").await;
+
+match result {
+    Err(Error::Execution(msg)) => println!("Execution error: {}", msg),
+    _ => {}
+}
+```
+
+Source: `crates/bashkit/src/error.rs:32-34`
+
+### Command Not Found
+
+When a command doesn't exist:
+
+```rust
+let result = bash.exec("nosuchcommand").await;
+
+match result {
+    Err(Error::CommandNotFound(cmd)) => {
+        println!("Command not found: {}", cmd);
+    }
+    _ => {}
+}
+```
+
+Source: `crates/bashkit/src/error.rs:40-42`
+
+### I/O Errors
+
+Filesystem operation failures:
+
+```rust
+let result = bash.exec("cat /nonexistent/file.txt").await;
+
+match result {
+    Err(Error::Io(io_err)) => {
+        println!("I/O error: {}", io_err);
+    }
+    _ => {}
+}
+```
+
+Source: `crates/bashkit/src/error.rs:36-38`
+
+### Resource Limit Exceeded
+
+When execution hits a configured limit:
+
+```rust
+use bashkit::{Bash, ExecutionLimits, Error, LimitExceeded};
+
+let limits = ExecutionLimits::new().max_commands(5);
+let mut bash = Bash::builder().limits(limits).build();
+
+let result = bash.exec("echo 1; echo 2; echo 3; echo 4; echo 5; echo 6").await;
+
+match result {
+    Err(Error::ResourceLimit(limit)) => {
+        match limit {
+            LimitExceeded::MaxCommands(max) => {
+                println!("Command limit exceeded: {}", max);
+            }
+            LimitExceeded::MaxLoopIterations(max) => {
+                println!("Loop iteration limit exceeded: {}", max);
+            }
+            LimitExceeded::MaxFunctionDepth(max) => {
+                println!("Function depth limit exceeded: {}", max);
+            }
+            LimitExceeded::Timeout(duration) => {
+                println!("Execution timeout: {:?}", duration);
+            }
+            _ => {}
+        }
+    }
+    _ => {}
+}
+```
+
+Source: `crates/bashkit/src/error.rs:44-46`
+
+#### Limit Types
+
+<ParamField path="MaxCommands" type="usize">
+  Maximum command count exceeded.
+  
+  Source: `crates/bashkit/src/limits.rs:303-304`
+</ParamField>
+
+<ParamField path="MaxLoopIterations" type="usize">
+  Maximum loop iterations (per-loop) exceeded.
+  
+  Source: `crates/bashkit/src/limits.rs:306-307`
+</ParamField>
+
+<ParamField path="MaxTotalLoopIterations" type="usize">
+  Maximum total loop iterations (across all nested/sequential loops) exceeded.
+  
+  Prevents nested loop multiplication attack (TM-DOS-018).
+  
+  Source: `crates/bashkit/src/limits.rs:309-310`
+</ParamField>
+
+<ParamField path="MaxFunctionDepth" type="usize">
+  Maximum function depth (recursion limit) exceeded.
+  
+  Source: `crates/bashkit/src/limits.rs:312-313`
+</ParamField>
+
+<ParamField path="Timeout" type="Duration">
+  Execution timeout exceeded.
+  
+  Source: `crates/bashkit/src/limits.rs:315-316`
+</ParamField>
+
+<ParamField path="ParserTimeout" type="Duration">
+  Parser timeout exceeded.
+  
+  Source: `crates/bashkit/src/limits.rs:318-319`
+</ParamField>
+
+<ParamField path="InputTooLarge" type="(usize, usize)">
+  Input script size exceeds maximum (actual bytes, max bytes).
+  
+  Source: `crates/bashkit/src/limits.rs:321-322`
+</ParamField>
+
+<ParamField path="AstTooDeep" type="(usize, usize)">
+  AST nesting depth exceeds maximum (actual depth, max depth).
+  
+  Source: `crates/bashkit/src/limits.rs:324-325`
+</ParamField>
+
+<ParamField path="ParserExhausted" type="(usize, usize)">
+  Parser fuel exhausted (actual operations, max operations).
+  
+  Source: `crates/bashkit/src/limits.rs:327-329`
+</ParamField>
+
+### Network Errors
+
+HTTP request failures:
+
+```rust
+let result = bash.exec("curl https://invalid-url").await;
+
+match result {
+    Err(Error::Network(msg)) => {
+        println!("Network error: {}", msg);
+    }
+    _ => {}
+}
+```
+
+Source: `crates/bashkit/src/error.rs:48-50`
+
+### Regex Errors
+
+Invalid regex patterns in grep/sed:
+
+```rust
+let result = bash.exec("echo test | grep '['").await;
+
+match result {
+    Err(Error::Regex(regex_err)) => {
+        println!("Regex error: {}", regex_err);
+    }
+    _ => {}
+}
+```
+
+Source: `crates/bashkit/src/error.rs:52-54`
+
+### Internal Errors
+
+Unexpected failures that don't expose sensitive details:
+
+```rust
+match result {
+    Err(Error::Internal(msg)) => {
+        println!("Internal error: {}", msg);
+        // Log for debugging, but message is safe to show users
+    }
+    _ => {}
+}
+```
+
+Source: `crates/bashkit/src/error.rs:56-71`
+
+**Security (TM-INT-002)**: Internal errors provide human-readable messages without exposing:
+- Stack traces
+- Memory addresses
+- Internal file paths
+- Panic messages that may contain sensitive data
+
+Source: `crates/bashkit/src/error.rs:58-68`
+
+## Error Handling Strategies
+
+### Basic Error Handling
+
+Use Rust's `?` operator for simple propagation:
+
+```rust
+use bashkit::{Bash, Result};
+
+async fn run_script() -> Result<String> {
+    let mut bash = Bash::new();
+    let result = bash.exec("echo hello").await?;
+    Ok(result.stdout)
+}
+```
+
+### Match on Error Type
+
+Handle different error types differently:
+
+```rust
+use bashkit::{Bash, Error};
+
+let mut bash = Bash::new();
+let result = bash.exec(script).await;
+
+match result {
+    Ok(exec_result) => {
+        println!("Output: {}", exec_result.stdout);
+    }
+    Err(Error::Parse(msg)) => {
+        eprintln!("Syntax error: {}", msg);
+        // Show helpful message to user
+    }
+    Err(Error::ResourceLimit(limit)) => {
+        eprintln!("Resource limit exceeded: {}", limit);
+        // Maybe increase limits and retry
+    }
+    Err(Error::CommandNotFound(cmd)) => {
+        eprintln!("Command not found: {}", cmd);
+        // Suggest installing required tools
+    }
+    Err(e) => {
+        eprintln!("Error: {}", e);
+    }
+}
+```
+
+### Retry on Specific Errors
+
+```rust
+use bashkit::{Bash, Error, ExecutionLimits};
+use std::time::Duration;
+
+async fn run_with_retry(script: &str) -> anyhow::Result<String> {
+    let mut bash = Bash::new();
+    let mut attempts = 0;
+    
+    loop {
+        match bash.exec(script).await {
+            Ok(result) => return Ok(result.stdout),
+            Err(Error::ResourceLimit(_)) if attempts < 2 => {
+                attempts += 1;
+                // Increase limits and retry
+                bash = Bash::builder()
+                    .limits(ExecutionLimits::new()
+                        .max_commands(10000 * (attempts + 1))
+                        .timeout(Duration::from_secs(60 * (attempts + 1))))
+                    .build();
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+}
+```
+
+### Convert to anyhow
+
+BashKit's errors implement `std::error::Error`, so they work with anyhow:
+
+```rust
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut bash = Bash::new();
+    
+    // Errors automatically convert to anyhow::Error
+    let result = bash.exec("echo hello").await?;
+    
+    println!("{}", result.stdout);
+    Ok(())
+}
+```
+
+### Logging Errors
+
+When the `logging` feature is enabled, errors are automatically logged:
+
+```rust
+use bashkit::{Bash, LogConfig};
+
+let mut bash = Bash::builder()
+    .log_config(LogConfig::new())
+    .build();
+
+// Errors will be logged at ERROR level
+let result = bash.exec("invalid syntax").await;
+```
+
+Source: `crates/bashkit/src/lib.rs:583-590`
+
+## Exit Codes vs Errors
+
+**Important distinction**: Non-zero exit codes are **not errors**. They return `Ok(ExecResult)` with `exit_code != 0`:
+
+```rust
+let mut bash = Bash::new();
+
+// This returns Ok (false command succeeded in returning 1)
+let result = bash.exec("false").await?;
+assert_eq!(result.exit_code, 1);
+assert_eq!(result.stdout, "");
+
+// This returns Err (syntax error)
+let result = bash.exec("if true then echo bad").await;
+assert!(result.is_err());
+```
+
+Use exit codes for:
+- Command failures (file not found, invalid arguments, etc.)
+- Conditional logic (`if`, `&&`, `||`)
+- Test commands (`[ -f file ]`)
+
+Use `Err` for:
+- Syntax errors
+- Resource limit exceeded
+- Internal failures
+- I/O errors
+
+## Custom Builtin Error Handling
+
+Custom builtins should return proper exit codes, not throw errors:
+
+```rust
+use bashkit::{Builtin, BuiltinContext, ExecResult, async_trait};
+
+struct MyCommand;
+
+#[async_trait]
+impl Builtin for MyCommand {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        // ✓ Return error exit code
+        if ctx.args.is_empty() {
+            return Ok(ExecResult::err("Usage: mycommand <arg>\n".into(), 1));
+        }
+        
+        // ✗ Don't throw errors for normal failures
+        // return Err(Error::Execution("missing argument".into()));
+        
+        Ok(ExecResult::ok("success\n".into()))
+    }
+}
+```
+
+Only return `Err` for:
+- Unexpected internal failures
+- Resource limit exceeded
+- I/O errors that can't be recovered
+
+## Complete Example
+
+```rust
+use bashkit::{Bash, Error, ExecutionLimits, LimitExceeded};
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let limits = ExecutionLimits::new()
+        .max_commands(100)
+        .timeout(Duration::from_secs(30));
+    
+    let mut bash = Bash::builder()
+        .limits(limits)
+        .env("USER", "sandbox")
+        .build();
+    
+    let script = r#"
+        if [ -f /data/input.txt ]; then
+            cat /data/input.txt | grep "pattern" > /data/output.txt
+        else
+            echo "Input file not found" >&2
+            exit 1
+        fi
+    "#;
+    
+    match bash.exec(script).await {
+        Ok(result) => {
+            if result.exit_code == 0 {
+                println!("Success: {}", result.stdout);
+            } else {
+                eprintln!("Script failed with exit code {}", result.exit_code);
+                eprintln!("Error: {}", result.stderr);
+            }
+        }
+        Err(Error::Parse(msg)) => {
+            eprintln!("Syntax error in script: {}", msg);
+        }
+        Err(Error::ResourceLimit(LimitExceeded::MaxCommands(max))) => {
+            eprintln!("Script exceeded command limit of {}", max);
+        }
+        Err(Error::ResourceLimit(LimitExceeded::Timeout(duration))) => {
+            eprintln!("Script timed out after {:?}", duration);
+        }
+        Err(e) => {
+            eprintln!("Unexpected error: {}", e);
+        }
+    }
+    
+    Ok(())
+}
+```

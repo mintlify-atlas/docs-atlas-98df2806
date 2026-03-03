@@ -1,0 +1,258 @@
+---
+title: ExecResult
+description: Command execution result object
+---
+
+`ExecResult` represents the result of executing bash commands. It contains stdout, stderr, exit code, and error information.
+
+## Fields
+
+<ResponseField name="stdout" type="str">
+  Standard output from the executed commands.
+  
+  ```python
+  result = bash.execute_sync("echo 'hello'")
+  print(result.stdout)  # "hello\n"
+  ```
+</ResponseField>
+
+<ResponseField name="stderr" type="str">
+  Standard error output from the executed commands.
+  
+  ```python
+  result = bash.execute_sync("echo 'error' >&2")
+  print(result.stderr)  # "error\n"
+  ```
+</ResponseField>
+
+<ResponseField name="exit_code" type="int">
+  Exit code of the last command. `0` indicates success.
+  
+  ```python
+  result = bash.execute_sync("exit 42")
+  print(result.exit_code)  # 42
+  ```
+</ResponseField>
+
+<ResponseField name="error" type="str | None">
+  Error message if execution failed at the interpreter level (e.g., syntax error, resource limit exceeded). `None` if execution completed normally.
+  
+  ```python
+  bash = Bash(max_loop_iterations=10)
+  result = bash.execute_sync("while true; do echo x; done")
+  print(result.error)  # "Loop iteration limit exceeded"
+  ```
+</ResponseField>
+
+<ResponseField name="success" type="bool">
+  Property that returns `True` if `exit_code == 0`, `False` otherwise.
+  
+  ```python
+  result = bash.execute_sync("echo 'ok'")
+  print(result.success)  # True
+  
+  result = bash.execute_sync("exit 1")
+  print(result.success)  # False
+  ```
+</ResponseField>
+
+## Methods
+
+### to_dict()
+
+Convert the result to a dictionary.
+
+```python
+data = result.to_dict()
+```
+
+<ResponseField name="dict" type="dict">
+  Dictionary with keys: `stdout`, `stderr`, `exit_code`, `error`.
+</ResponseField>
+
+#### Example
+
+```python
+result = bash.execute_sync("echo 'test'")
+data = result.to_dict()
+print(data)
+# {
+#     'stdout': 'test\n',
+#     'stderr': '',
+#     'exit_code': 0,
+#     'error': None
+# }
+```
+
+## String Representation
+
+### \_\_str\_\_()
+
+String representation for display.
+
+```python
+result = bash.execute_sync("echo 'hello'")
+print(str(result))  # "hello\n"
+
+result = bash.execute_sync("exit 1")
+print(str(result))  # "Error (1): "
+```
+
+Returns:
+- `stdout` if `exit_code == 0`
+- `"Error ({exit_code}): {stderr}"` otherwise
+
+### \_\_repr\_\_()
+
+Detailed representation for debugging.
+
+```python
+result = bash.execute_sync("echo 'test'")
+print(repr(result))
+# ExecResult(stdout='test\n', stderr='', exit_code=0, error=None)
+```
+
+## Examples
+
+### Checking Success
+
+```python
+from bashkit import Bash
+
+bash = Bash()
+result = bash.execute_sync("test -f /tmp/file.txt")
+
+if result.success:
+    print("File exists")
+else:
+    print("File does not exist")
+```
+
+### Handling Errors
+
+```python
+result = bash.execute_sync("grep 'pattern' /tmp/file.txt")
+
+if not result.success:
+    if result.exit_code == 1:
+        print("Pattern not found")
+    elif result.exit_code == 2:
+        print("File error")
+    print(f"Stderr: {result.stderr}")
+```
+
+### Accessing Output
+
+```python
+result = bash.execute_sync("echo -e 'line1\\nline2\\nline3'")
+
+lines = result.stdout.strip().split('\n')
+for line in lines:
+    print(f"Line: {line}")
+```
+
+### Converting to Dict
+
+```python
+import json
+
+result = bash.execute_sync("echo 'test'")
+data = result.to_dict()
+
+# Serialize to JSON
+json_str = json.dumps(data)
+print(json_str)
+```
+
+### Checking for Interpreter Errors
+
+```python
+bash = Bash(max_commands=10)
+result = bash.execute_sync("for i in {1..100}; do true; done")
+
+if result.error:
+    print(f"Interpreter error: {result.error}")
+elif not result.success:
+    print(f"Command failed: exit_code={result.exit_code}")
+else:
+    print("Success")
+```
+
+### Async Usage
+
+```python
+import asyncio
+from bashkit import Bash
+
+async def main():
+    bash = Bash()
+    result = await bash.execute("echo 'async result'")
+    
+    print(f"Success: {result.success}")
+    print(f"Output: {result.stdout}")
+    print(f"Exit code: {result.exit_code}")
+
+asyncio.run(main())
+```
+
+### Pattern: Check Exit Code
+
+```python
+result = bash.execute_sync("command_that_might_fail")
+
+if result.exit_code == 0:
+    print("Success")
+elif result.exit_code == 1:
+    print("Expected failure")
+else:
+    print(f"Unexpected exit code: {result.exit_code}")
+```
+
+### Pattern: Collect All Output
+
+```python
+result = bash.execute_sync("complex_command")
+
+full_output = result.stdout
+if result.stderr:
+    full_output += f"\nSTDERR:\n{result.stderr}"
+
+print(full_output)
+```
+
+## Common Patterns
+
+### Test for Specific Exit Code
+
+```python
+# Check if file exists (test returns 0 if true)
+result = bash.execute_sync("test -f /tmp/file.txt")
+file_exists = result.exit_code == 0
+```
+
+### Capture and Parse JSON
+
+```python
+import json
+
+result = bash.execute_sync("echo '{\"key\": \"value\"}' | jq .")
+if result.success:
+    data = json.loads(result.stdout)
+    print(data["key"])  # "value"
+```
+
+### Count Lines
+
+```python
+result = bash.execute_sync("cat /tmp/file.txt | wc -l")
+if result.success:
+    line_count = int(result.stdout.strip())
+    print(f"{line_count} lines")
+```
+
+## See Also
+
+- [Bash](/python/api/bash) - Core interpreter class
+- [BashTool](/python/api/bash-tool) - Tool wrapper class
+- [ScriptedTool](/python/api/scripted-tool) - Multi-tool orchestration
+- [Basic Usage](/python/basic-usage) - Common usage patterns

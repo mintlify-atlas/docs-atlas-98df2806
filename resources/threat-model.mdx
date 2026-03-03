@@ -1,0 +1,367 @@
+---
+title: Threat Model
+description: Detailed security threat analysis and mitigations
+---
+
+This document provides detailed analysis of security threats and their mitigations.
+
+## Overview
+
+BashKit assumes all script input is potentially malicious. The virtual environment prevents:
+
+- Resource exhaustion (CPU, memory, disk)
+- Sandbox escape (filesystem, process, privilege)
+- Information disclosure (secrets, host info)
+- Network abuse (exfiltration, unauthorized access)
+
+## Threat ID Categories
+
+All threats use stable IDs in the format `TM-<CATEGORY>-<NUMBER>`:
+
+| Prefix | Category |
+|--------|----------|
+| TM-DOS | Denial of Service |
+| TM-ESC | Sandbox Escape |
+| TM-INF | Information Disclosure |
+| TM-INJ | Injection |
+| TM-NET | Network Security |
+| TM-ISO | Multi-Tenant Isolation |
+| TM-INT | Internal Error Handling |
+| TM-LOG | Logging Security |
+| TM-GIT | Git Security |
+| TM-PY | Python/Monty Security |
+| TM-UNI | Unicode Security |
+
+## Denial of Service (TM-DOS-*)
+
+### Memory Exhaustion
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-DOS-001 | Large script input | `max_input_bytes` limit (10MB) |
+| TM-DOS-002 | Output flooding | Command limit stops loop |
+| TM-DOS-003 | Variable explosion | No /dev/urandom in VFS |
+| TM-DOS-004 | Array growth | Command limit |
+
+### Filesystem Exhaustion
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-DOS-005 | Large file creation | `max_file_size` limit (10MB) |
+| TM-DOS-006 | Many small files | `max_file_count` limit (10K) |
+| TM-DOS-007 | Zip bomb | Decompression limit |
+| TM-DOS-008 | Tar bomb | FS limits |
+| TM-DOS-009 | Recursive copy | FS limits |
+| TM-DOS-010 | Append flood | FS limits + loop limit |
+
+### Path Attacks
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-DOS-011 | Symlink loops | No symlink following |
+| TM-DOS-012 | Deep directory nesting | `max_path_depth` limit (100) |
+| TM-DOS-013 | Long filenames | `max_filename_length` (255) |
+| TM-DOS-014 | Many directory entries | `max_file_count` limit |
+| TM-DOS-015 | Unicode path attacks | Path validation rejects control chars |
+
+### Infinite Loops
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-DOS-016 | While true | Loop limit (10K) |
+| TM-DOS-017 | For loop | Loop limit |
+| TM-DOS-018 | Nested loops | `max_total_loop_iterations` (1M) |
+| TM-DOS-019 | Command loop | Command limit (10K) |
+
+### Stack Overflow
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-DOS-020 | Function recursion | Depth limit (100) |
+| TM-DOS-021 | Command sub nesting | Inherited depth budget |
+| TM-DOS-022 | Parser recursion | `max_ast_depth` limit (100) |
+| TM-DOS-026 | Arithmetic recursion | `MAX_ARITHMETIC_DEPTH` (50) |
+
+### CPU Exhaustion
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-DOS-023 | Long computation | Timeout (30s) |
+| TM-DOS-024 | Parser hang | `parser_timeout` (5s) + fuel |
+| TM-DOS-025 | Regex backtrack | Regex crate limits |
+| TM-DOS-027 | Builtin parser recursion | Depth limits (100) |
+| TM-DOS-028 | Diff algorithm DoS | LCS matrix cap (10M cells) |
+
+## Sandbox Escape (TM-ESC-*)
+
+### Filesystem Escape
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-ESC-001 | Path traversal | Path normalization |
+| TM-ESC-002 | Symlink escape | Symlinks not followed |
+| TM-ESC-003 | Real FS access | No real FS by default |
+| TM-ESC-004 | Mount escape | MountableFs controlled |
+
+### Process Escape
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-ESC-005 | Shell escape | exec not implemented (exit 127) |
+| TM-ESC-006 | Subprocess | Script execution in VFS sandbox |
+| TM-ESC-007 | Background proc | Background not implemented |
+| TM-ESC-008 | eval injection | eval sandboxed (builtins only) |
+| TM-ESC-015 | bash/sh escape | Sandboxed re-invocation |
+
+### Privilege Escalation
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-ESC-009 | sudo/su | Not implemented |
+| TM-ESC-010 | setuid | Virtual FS, no real perms |
+| TM-ESC-011 | Capability abuse | Runs in-process |
+
+## Information Disclosure (TM-INF-*)
+
+### Secrets Access
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-INF-001 | Env var leak | Caller responsibility |
+| TM-INF-002 | File secrets | Virtual FS isolation |
+| TM-INF-003 | Proc secrets | No /proc filesystem |
+| TM-INF-004 | Memory dump | No crash dumps |
+
+### Host Information
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-INF-005 | Hostname | Returns virtual value |
+| TM-INF-006 | Username | Returns virtual value |
+| TM-INF-007 | IP address | Not implemented |
+| TM-INF-008 | System info | Returns virtual values |
+| TM-INF-009 | User ID | Returns hardcoded uid=1000 |
+
+### Network Exfiltration
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-INF-010 | HTTP exfil | Network allowlist |
+| TM-INF-011 | DNS exfil | No DNS commands |
+| TM-INF-012 | Timing channel | Not addressed (minimal risk) |
+
+## Injection Attacks (TM-INJ-*)
+
+### Command Injection
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-INJ-001 | Variable injection | Variables not re-parsed |
+| TM-INJ-002 | Backtick injection | Parsed as command sub |
+| TM-INJ-003 | eval bypass | eval sandboxed |
+
+### Path Injection
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-INJ-004 | Null byte | Rust strings no nulls |
+| TM-INJ-005 | Path traversal | Path normalization |
+| TM-INJ-006 | Encoding bypass | PathBuf handles |
+
+### Terminal Injection
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-INJ-007 | HTML in output | N/A - CLI tool |
+| TM-INJ-008 | Terminal escape | Caller should sanitize |
+
+## Network Security (TM-NET-*)
+
+### DNS Manipulation
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-NET-001 | DNS spoofing | No DNS resolution |
+| TM-NET-002 | DNS rebinding | Literal host matching |
+| TM-NET-003 | DNS exfiltration | No DNS commands |
+
+### Network Bypass
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-NET-004 | IP instead of host | Literal IP blocked unless allowed |
+| TM-NET-005 | Port scanning | Port must match allowlist |
+| TM-NET-006 | Protocol downgrade | Scheme must match |
+| TM-NET-007 | Subdomain bypass | Exact host match |
+| TM-NET-017 | Wildcard subdomain exfil | No wildcards supported |
+
+### HTTP Attack Vectors
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-NET-008 | Large response DoS | Response size limit (10MB) |
+| TM-NET-009 | Connection hang | Connection timeout (10s) |
+| TM-NET-010 | Slowloris attack | Read timeout (30s) |
+| TM-NET-011 | Redirect bypass | Redirects not auto-followed |
+| TM-NET-012 | Chunked encoding bomb | Response size limit (streaming) |
+| TM-NET-013 | Gzip bomb | Auto-decompression disabled |
+| TM-NET-014 | DNS rebind via redirect | Manual redirect requires allowlist |
+
+## Multi-Tenant Isolation (TM-ISO-*)
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-ISO-001 | Shared filesystem | Separate Bash instances |
+| TM-ISO-002 | Shared memory | Rust memory safety |
+| TM-ISO-003 | Resource starvation | Per-instance limits |
+
+## Internal Error Handling (TM-INT-*)
+
+### Panic Recovery
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-INT-001 | Builtin panic crash | `catch_unwind` wrapper |
+| TM-INT-002 | Panic info leak | Sanitized error messages |
+| TM-INT-003 | Date format panic | Pre-validation |
+
+### Error Message Safety
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-INT-004 | Path leak in errors | Virtual paths only |
+| TM-INT-005 | Memory addr in errors | Display impl hides addresses |
+| TM-INT-006 | Stack trace exposure | `catch_unwind` prevents propagation |
+
+## Git Security (TM-GIT-*)
+
+| ID | Threat | Mitigation | Status |
+|----|--------|------------|--------|
+| TM-GIT-002 | Host identity leak | Configurable virtual identity | MITIGATED |
+| TM-GIT-003 | Host git config | No host filesystem access | MITIGATED |
+| TM-GIT-004 | Credential theft | No host filesystem access | MITIGATED |
+| TM-GIT-005 | Repository escape | All paths in VFS | MITIGATED |
+| TM-GIT-007 | Many git objects | `max_file_count` FS limit | MITIGATED |
+| TM-GIT-008 | Deep history | Log limit parameter | MITIGATED |
+| TM-GIT-009 | Large pack files | `max_file_size` FS limit | MITIGATED |
+
+## Logging Security (TM-LOG-*)
+
+### Sensitive Data Leakage
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-LOG-001 | Secrets in logs | LogConfig redaction |
+| TM-LOG-002 | Script content leak | Disabled by default |
+| TM-LOG-003 | URL credential leak | URL redaction |
+| TM-LOG-004 | API key detection | Entropy-based detection |
+
+### Log Injection
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-LOG-005 | Newline injection | Newline escaping |
+| TM-LOG-006 | Control char injection | Control char filtering |
+
+### Log Volume Attacks
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-LOG-007 | Log flooding | Value truncation |
+| TM-LOG-008 | Large value DoS | `max_value_length` limit (200) |
+
+## Python/Monty Security (TM-PY-*)
+
+| ID | Threat | Mitigation |
+|----|--------|------------|
+| TM-PY-001 | Infinite loop | Monty time limit (30s) |
+| TM-PY-002 | Memory exhaustion | Monty max_memory (64MB) |
+| TM-PY-003 | Stack overflow | Monty max_recursion (200) |
+| TM-PY-004 | Shell escape | No os.system/subprocess |
+| TM-PY-005 | Real FS access | No open() builtin |
+| TM-PY-015 | Real FS read | VFS bridge reads from BashKit VFS |
+| TM-PY-016 | Real FS write | VFS bridge writes to BashKit VFS |
+| TM-PY-017 | Path traversal | VFS path normalization |
+| TM-PY-020 | Network access | No socket/network module |
+
+## Unicode Security (TM-UNI-*)
+
+### Byte-Boundary Safety
+
+| ID | Threat | Mitigation | Status |
+|----|--------|------------|--------|
+| TM-UNI-001 | Awk byte-boundary panic | `catch_unwind` catches | PARTIAL |
+| TM-UNI-002 | Sed byte-boundary panic | `catch_unwind` catches | PARTIAL |
+| TM-UNI-015 | Expr substr panic | `catch_unwind` catches | PARTIAL |
+| TM-UNI-016 | Printf precision panic | `catch_unwind` catches | PARTIAL |
+| TM-UNI-017 | Cut/tr byte-level parsing | Silent data loss | PARTIAL |
+
+### Path Validation
+
+| ID | Threat | Status |
+|----|--------|--------|
+| TM-UNI-003 | Zero-width in filenames | UNMITIGATED |
+| TM-UNI-006 | Homoglyph confusion | ACCEPTED |
+| TM-UNI-008 | Normalization bypass | ACCEPTED |
+| TM-UNI-014 | Bidi in script source | ACCEPTED |
+
+## Mitigations Reference
+
+### Configuration Example
+
+```rust
+use bashkit::{Bash, ExecutionLimits, FsLimits, InMemoryFs, NetworkAllowlist};
+use std::sync::Arc;
+use std::time::Duration;
+
+// Execution limits
+let limits = ExecutionLimits::new()
+    .max_commands(10_000)
+    .max_loop_iterations(10_000)
+    .max_function_depth(100)
+    .timeout(Duration::from_secs(30))
+    .max_input_bytes(10_000_000);  // 10MB
+
+// Filesystem limits
+let fs_limits = FsLimits::new()
+    .max_total_bytes(100_000_000)  // 100MB
+    .max_file_size(10_000_000)     // 10MB per file
+    .max_file_count(10_000);
+
+let fs = Arc::new(InMemoryFs::with_limits(fs_limits));
+
+// Network allowlist
+let allowlist = NetworkAllowlist::new()
+    .allow("https://api.example.com")
+    .allow_domain("cdn.example.com");
+
+// Build with all protections
+let bash = Bash::builder()
+    .limits(limits)
+    .fs(fs)
+    .network(allowlist)
+    .username("sandbox")
+    .hostname("bashkit-sandbox")
+    .build();
+```
+
+## Security Testing
+
+BashKit includes comprehensive security tests:
+
+- **Threat Model Tests** - 117 tests covering all threat categories
+- **Unicode Security Tests** - Byte-boundary panics, invisible chars
+- **Nesting Depth Tests** - 18 tests for parser depth attacks
+- **Network Security Tests** - 53 tests for HTTP attack vectors
+- **Fail-Point Tests** - 14 security control injection tests
+- **Fuzz Testing** - Parser and lexer fuzzing
+
+## Reporting Security Issues
+
+If you discover a security vulnerability, please report it privately via GitHub Security Advisories rather than opening a public issue.
+
+## See Also
+
+- [Security Model](/resources/security-model) - Overview
+- [POSIX Compliance](/resources/posix-compliance) - Security exclusions
+- [specs/006-threat-model.md](https://github.com/everruns/bashkit/blob/main/specs/006-threat-model.md) - Full specification

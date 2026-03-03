@@ -1,0 +1,236 @@
+---
+title: Architecture
+description: System architecture and design principles of BashKit
+---
+
+BashKit is built with a modular, async-first architecture designed for multi-tenant environments.
+
+## Project Structure
+
+BashKit uses a Cargo workspace with multiple crates:
+
+```
+bashkit/
+├── crates/
+│   ├── bashkit/           # Core library
+│   ├── bashkit-cli/       # CLI binary
+│   ├── bashkit-python/    # Python bindings
+│   ├── bashkit-eval/      # LLM evaluation harness
+│   └── bashkit-bench/     # Benchmarking tools
+├── specs/                 # Design specifications
+└── Cargo.toml            # Workspace root
+```
+
+## Core Library Structure
+
+The `bashkit` crate is organized into focused modules:
+
+```
+src/
+├── lib.rs                # Public API: Bash struct
+├── error.rs              # Error types
+├── limits.rs             # Execution limits
+├── tool.rs               # LLM tool contract
+├── parser/               # Lexer + Parser + AST
+│   ├── lexer.rs         # Tokenization
+│   └── ast.rs           # AST node types
+├── interpreter/          # Execution engine
+│   └── state.rs         # ExecResult types
+├── fs/                   # Virtual filesystem
+│   ├── traits.rs        # FileSystem trait
+│   └── memory.rs        # InMemoryFs
+├── network/              # Network access
+│   └── allowlist.rs     # URL allowlist
+└── builtins/            # Built-in commands (50+ files)
+    ├── echo.rs
+    ├── grep.rs
+    ├── sed.rs
+    └── ...
+```
+
+## Public API
+
+The main entry point is the `Bash` struct:
+
+```rust
+pub struct Bash {
+    fs: Arc<dyn FileSystem>,
+    interpreter: Interpreter,
+}
+
+impl Bash {
+    pub fn new() -> Self;
+    pub fn builder() -> BashBuilder;
+    pub async fn exec(&mut self, script: &str) -> Result<ExecResult>;
+}
+
+pub struct ExecResult {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+```
+
+## LLM Tool Contract
+
+BashKit implements the `Tool` trait for LLM integration:
+
+```rust
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn description(&self) -> String;
+    fn help(&self) -> String;
+    fn system_prompt(&self) -> String;
+    fn input_schema(&self) -> serde_json::Value;
+    fn output_schema(&self) -> serde_json::Value;
+    async fn execute(&mut self, req: ToolRequest) -> ToolResponse;
+}
+
+pub struct BashTool { /* implements Tool */ }
+pub struct ToolRequest { commands: String }
+pub struct ToolResponse { stdout, stderr, exit_code, error }
+```
+
+See [Tool trait reference](/api/tool-trait) for details.
+
+## Design Principles
+
+### 1. Async-first
+
+All filesystem and execution operations are async using tokio:
+
+```rust
+let mut bash = Bash::new();
+let result = bash.exec("echo hello").await?;
+```
+
+This enables:
+- Non-blocking I/O operations
+- Concurrent script execution
+- Timeout enforcement
+- Streaming output callbacks
+
+### 2. Virtual by default
+
+No real filesystem access by default. All operations use the virtual filesystem:
+
+```rust
+let mut bash = Bash::new(); // Uses InMemoryFs
+bash.exec("echo data > /tmp/file.txt").await?;
+// File exists only in virtual filesystem
+```
+
+### 3. Multi-tenant safe
+
+Each `Bash` instance has isolated state:
+- Separate virtual filesystem
+- Independent environment variables
+- Isolated execution limits
+- No shared global state
+
+```rust
+let mut bash1 = Bash::new();
+let mut bash2 = Bash::new();
+// bash1 and bash2 are completely isolated
+```
+
+### 4. Trait-based extensibility
+
+Key traits allow customization:
+
+- **`FileSystem`** - Implement custom storage backends
+- **`Builtin`** - Add domain-specific commands
+- **`Tool`** - Integrate with LLM frameworks
+
+```rust
+use bashkit::{FileSystem, Builtin};
+
+// Custom filesystem
+struct S3Fs { /* ... */ }
+#[async_trait]
+impl FileSystem for S3Fs { /* ... */ }
+
+// Custom builtin
+struct ApiCall;
+#[async_trait]
+impl Builtin for ApiCall { /* ... */ }
+```
+
+## Execution Flow
+
+<Steps>
+  <Step title="Parse">
+    Script string → Lexer → Token stream → Parser → AST
+  </Step>
+  <Step title="Execute">
+    AST → Interpreter → Builtin execution → Virtual filesystem operations
+  </Step>
+  <Step title="Return">
+    Collect stdout/stderr → Exit code → ExecResult
+  </Step>
+</Steps>
+
+## Resource Management
+
+BashKit enforces strict resource limits:
+
+```rust
+let limits = ExecutionLimits::new()
+    .max_commands(1000)
+    .max_loop_iterations(10000)
+    .timeout(Duration::from_secs(30));
+
+let mut bash = Bash::builder()
+    .limits(limits)
+    .build();
+```
+
+See [Resource limits](/concepts/resource-limits) for details.
+
+## Thread Safety
+
+All core types are `Send + Sync`:
+
+```rust
+let bash = Arc::new(Mutex::new(Bash::new()));
+
+// Share across threads
+let bash_clone = Arc::clone(&bash);
+tokio::spawn(async move {
+    let mut b = bash_clone.lock().unwrap();
+    b.exec("echo hello").await.unwrap();
+});
+```
+
+<Note>
+The filesystem is wrapped in `Arc<dyn FileSystem>` internally, so cloning `Bash` shares the same filesystem instance.
+</Note>
+
+## Security Model
+
+BashKit's architecture enforces security at multiple layers:
+
+1. **Sandboxed execution** - No host filesystem access
+2. **Resource limits** - Command count, loop iterations, recursion depth
+3. **Network allowlist** - Explicit URL patterns for HTTP access
+4. **Stateless design** - No background processes or persistent state
+5. **Input validation** - Parser limits, AST depth checks
+
+See [Security model](/resources/security-model) and [Threat model](/resources/threat-model) for comprehensive analysis.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Virtual filesystem" icon="folder" href="/concepts/virtual-filesystem">
+    Learn about filesystem implementations
+  </Card>
+  <Card title="Execution model" icon="gears" href="/concepts/execution-model">
+    Understand how commands execute
+  </Card>
+  <Card title="Custom builtins" icon="puzzle-piece" href="/guides/custom-builtins">
+    Extend with domain-specific commands
+  </Card>
+  <Card title="API reference" icon="code" href="/api/bash">
+    Explore the Rust API
+  </Card>
+</CardGroup>

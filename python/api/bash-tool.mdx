@@ -1,0 +1,336 @@
+---
+title: BashTool
+description: Bash interpreter with LLM tool metadata
+---
+
+`BashTool` is a convenience wrapper for AI agents. It extends `Bash` with LLM tool metadata (schema, description, system prompt) needed by tool-use protocols. Use this when integrating with LangChain, PydanticAI, or similar agent frameworks.
+
+## Constructor
+
+```python
+from bashkit import BashTool
+
+tool = BashTool(
+    username="user",
+    hostname="sandbox",
+    max_commands=None,
+    max_loop_iterations=None
+)
+```
+
+### Parameters
+
+<ParamField path="username" type="str" optional>
+  Custom username for the sandbox environment.
+  
+  **Default:** `"user"`
+</ParamField>
+
+<ParamField path="hostname" type="str" optional>
+  Custom hostname for the sandbox environment.
+  
+  **Default:** `"sandbox"`
+</ParamField>
+
+<ParamField path="max_commands" type="int" optional>
+  Maximum number of commands per execution.
+  
+  **Default:** unlimited
+</ParamField>
+
+<ParamField path="max_loop_iterations" type="int" optional>
+  Maximum loop iterations per execution.
+  
+  **Default:** unlimited
+</ParamField>
+
+## Execution Methods
+
+Inherits all execution methods from `Bash`:
+
+### execute()
+
+```python
+result = await tool.execute("echo 'Hello!'")
+```
+
+See [Bash.execute()](/python/api/bash#execute) for details.
+
+### execute_sync()
+
+```python
+result = tool.execute_sync("echo 'Hello!'")
+```
+
+See [Bash.execute_sync()](/python/api/bash#execute_sync) for details.
+
+### reset()
+
+```python
+tool.reset()
+```
+
+See [Bash.reset()](/python/api/bash#reset) for details.
+
+## LLM Tool Metadata
+
+### name
+
+Get the tool name.
+
+```python
+print(tool.name)  # "bashkit"
+```
+
+<ResponseField name="name" type="str">
+  Tool name: `"bashkit"`
+</ResponseField>
+
+### short_description
+
+Get a short one-line description.
+
+```python
+print(tool.short_description)
+# "Virtual bash interpreter with virtual filesystem"
+```
+
+<ResponseField name="short_description" type="str">
+  One-line description for tool listings
+</ResponseField>
+
+### description()
+
+Get a human-readable description.
+
+```python
+desc = tool.description()
+```
+
+<ResponseField name="description" type="str">
+  Multi-line description of capabilities and usage
+</ResponseField>
+
+### help()
+
+Get detailed documentation in man-page format.
+
+```python
+help_text = tool.help()
+```
+
+<ResponseField name="help" type="str">
+  Comprehensive documentation for end users
+</ResponseField>
+
+### system_prompt()
+
+Get a token-efficient system prompt for LLM integration.
+
+```python
+prompt = tool.system_prompt()
+```
+
+<ResponseField name="system_prompt" type="str">
+  Concise system prompt describing tool usage for LLMs
+</ResponseField>
+
+#### Example
+
+```python
+tool = BashTool()
+print(tool.system_prompt())
+# Includes: syntax, common commands, limitations, examples
+```
+
+### input_schema()
+
+Get JSON Schema for input parameters.
+
+```python
+schema = tool.input_schema()
+```
+
+<ResponseField name="schema" type="str">
+  JSON Schema string (formatted with pretty-print)
+</ResponseField>
+
+#### Example
+
+```python
+import json
+
+tool = BashTool()
+schema = json.loads(tool.input_schema())
+print(schema)
+# {"type": "object", "properties": {"commands": {...}}, ...}
+```
+
+### output_schema()
+
+Get JSON Schema for output format.
+
+```python
+schema = tool.output_schema()
+```
+
+<ResponseField name="schema" type="str">
+  JSON Schema string describing ExecResult format
+</ResponseField>
+
+### version
+
+Get the tool version.
+
+```python
+print(tool.version)  # e.g., "0.1.2"
+```
+
+<ResponseField name="version" type="str">
+  Semantic version string
+</ResponseField>
+
+## Examples
+
+### Basic Usage
+
+```python
+from bashkit import BashTool
+
+tool = BashTool()
+
+# Execute commands
+result = tool.execute_sync("echo 'Hello, AI!'")
+print(result.stdout)  # Hello, AI!
+
+# Get metadata for LLM
+print(tool.input_schema())
+print(tool.system_prompt())
+```
+
+### With LangChain
+
+```python
+from bashkit.langchain import create_bash_tool
+from langchain_anthropic import ChatAnthropic
+from langgraph.prebuilt import create_react_agent
+
+# Create tool
+bash_tool = create_bash_tool(
+    max_commands=1000,
+    max_loop_iterations=10000
+)
+
+# Use with agent
+model = ChatAnthropic(model="claude-sonnet-4-20250514")
+agent = create_react_agent(model, [bash_tool])
+
+result = agent.invoke({
+    "messages": [{"role": "user", "content": "List all .txt files"}]
+})
+```
+
+### With PydanticAI
+
+```python
+from bashkit.pydantic_ai import create_bash_tool
+from pydantic_ai import Agent
+import asyncio
+
+async def main():
+    bash_tool = create_bash_tool(
+        max_commands=1000,
+        max_loop_iterations=10000
+    )
+    
+    agent = Agent(
+        'anthropic:claude-sonnet-4-20250514',
+        tools=[bash_tool]
+    )
+    
+    result = await agent.run("Count how many files are in the current directory")
+    print(result.data)
+
+asyncio.run(main())
+```
+
+### Inspecting Tool Metadata
+
+```python
+tool = BashTool()
+
+# Tool identity
+print(f"Name: {tool.name}")
+print(f"Version: {tool.version}")
+print(f"Description: {tool.short_description}")
+
+# Full documentation
+print("\n=== HELP ===")
+print(tool.help())
+
+# System prompt
+print("\n=== SYSTEM PROMPT ===")
+print(tool.system_prompt())
+
+# Schema
+print("\n=== INPUT SCHEMA ===")
+print(tool.input_schema())
+```
+
+### Error Handling
+
+```python
+tool = BashTool()
+
+result = tool.execute_sync("exit 1")
+
+if not result.success:
+    print(f"Command failed: exit_code={result.exit_code}")
+    if result.error:
+        print(f"Error: {result.error}")
+    if result.stderr:
+        print(f"Stderr: {result.stderr}")
+```
+
+### Resource Limits
+
+```python
+tool = BashTool(
+    max_commands=100,
+    max_loop_iterations=1000
+)
+
+# This will be stopped
+result = tool.execute_sync("while true; do echo x; done")
+print(result.success)  # False
+```
+
+## Differences from Bash
+
+`BashTool` extends `Bash` with these additional methods:
+
+- `name` - Tool name property
+- `short_description` - One-line description
+- `system_prompt()` - Token-efficient prompt for LLMs
+- `version` - Version string
+
+All execution methods (`execute`, `execute_sync`, `reset`) work identically.
+
+## When to Use BashTool vs Bash
+
+**Use `BashTool` when:**
+- Integrating with LangChain, PydanticAI, or other AI frameworks
+- You need tool metadata (schema, description, system prompt)
+- Building LLM agents that call tools
+
+**Use `Bash` when:**
+- Direct command execution without LLM integration
+- You don't need tool metadata
+- Building non-agent applications
+
+## See Also
+
+- [Bash](/python/api/bash) - Core interpreter class
+- [ExecResult](/python/api/exec-result) - Execution result object
+- [LangChain Integration](/python/langchain) - Using with LangChain
+- [PydanticAI Integration](/python/pydantic-ai) - Using with PydanticAI

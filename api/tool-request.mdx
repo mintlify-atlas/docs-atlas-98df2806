@@ -1,0 +1,283 @@
+---
+title: ToolRequest
+description: Request structure for tool execution
+---
+
+## Overview
+
+`ToolRequest` encapsulates the input for executing a bash tool. It contains the commands to run and optional execution parameters like timeout.
+
+## Structure
+
+```rust
+pub struct ToolRequest {
+    pub commands: String,
+    pub timeout_ms: Option<u64>,
+}
+```
+
+## Fields
+
+<ParamField path="commands" type="String" required>
+  Bash commands to execute (like `bash -c "commands"`). Can be:
+  - Single command: `"echo hello"`
+  - Multiple commands: `"echo start; echo end"`
+  - Scripts with loops, conditionals, functions, etc.
+</ParamField>
+
+<ParamField path="timeout_ms" type="Option<u64>">
+  Optional per-call timeout in milliseconds. When set, execution is aborted after this duration and a response with `exit_code = 124` is returned (matching bash `timeout` convention).
+</ParamField>
+
+## Creating Requests
+
+### `new()`
+
+Create a request with just commands (no timeout).
+
+```rust
+pub fn new(commands: impl Into<String>) -> Self
+```
+
+**Example:**
+
+```rust
+use bashkit::ToolRequest;
+
+let req = ToolRequest::new("echo hello");
+assert_eq!(req.commands, "echo hello");
+assert!(req.timeout_ms.is_none());
+```
+
+### Direct Construction
+
+Create with all fields:
+
+```rust
+use bashkit::ToolRequest;
+
+let req = ToolRequest {
+    commands: "sleep 10".to_string(),
+    timeout_ms: Some(5000),  // 5 seconds
+};
+```
+
+## Serialization
+
+`ToolRequest` implements `Serialize` and `Deserialize` via serde:
+
+```rust
+use bashkit::ToolRequest;
+use serde_json;
+
+// To JSON
+let req = ToolRequest::new("echo test");
+let json = serde_json::to_string(&req).unwrap();
+// {"commands":"echo test"}
+
+// From JSON
+let req: ToolRequest = serde_json::from_str(r#"
+    {
+        "commands": "ls -la",
+        "timeout_ms": 3000
+    }
+"#).unwrap();
+```
+
+**JSON Schema:**
+Use `Tool::input_schema()` to get the JSON Schema for validation.
+
+## Usage Examples
+
+### Simple Command
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest};
+
+#[tokio::main]
+async fn main() {
+    let mut tool = BashTool::default();
+    
+    let req = ToolRequest::new("pwd");
+    let resp = tool.execute(req).await;
+    
+    println!("{}", resp.stdout);
+}
+```
+
+### With Timeout
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest};
+
+#[tokio::main]
+async fn main() {
+    let mut tool = BashTool::default();
+    
+    let req = ToolRequest {
+        commands: "sleep 10".to_string(),
+        timeout_ms: Some(1000),  // 1 second timeout
+    };
+    
+    let resp = tool.execute(req).await;
+    assert_eq!(resp.exit_code, 124);  // Timeout exit code
+    assert!(resp.stderr.contains("timed out"));
+}
+```
+
+### Multi-line Script
+
+```rust
+let req = ToolRequest::new(r#"
+    #!/bin/bash
+    
+    function greet() {
+        echo "Hello, $1!"
+    }
+    
+    for name in Alice Bob Charlie; do
+        greet $name
+    done
+"#);
+```
+
+### Pipeline and Redirection
+
+```rust
+let req = ToolRequest::new(
+    "echo -e 'apple\\nbanana\\ncherry' | grep a | sort"
+);
+```
+
+### File Operations
+
+```rust
+let req = ToolRequest::new(r#"
+    mkdir -p /data/logs
+    echo "Log entry" > /data/logs/app.log
+    cat /data/logs/app.log
+"#);
+```
+
+### Environment Access
+
+```rust
+// If tool was built with .env("API_KEY", "secret")
+let req = ToolRequest::new("echo $API_KEY");
+```
+
+### JSON Processing
+
+```rust
+let req = ToolRequest::new(r#"
+    echo '{"users": ["alice", "bob"]}' | jq '.users[]'
+"#);
+```
+
+### Error Handling
+
+```rust
+let req = ToolRequest::new(r#"
+    if [ -f /data/config.json ]; then
+        echo "Config found"
+        exit 0
+    else
+        echo "Config missing" >&2
+        exit 1
+    fi
+"#);
+```
+
+## Timeout Behavior
+
+When `timeout_ms` is set:
+
+1. **Timer starts** when execution begins (after parsing)
+2. **Execution aborted** when timeout expires
+3. **Response returned** with:
+   - `exit_code = 124` (matches bash `timeout` command)
+   - `stderr` contains timeout message
+   - `error = Some("timeout")`
+   - Partial `stdout` from before timeout
+
+**Example:**
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest};
+
+#[tokio::main]
+async fn main() {
+    let mut tool = BashTool::default();
+    
+    let req = ToolRequest {
+        commands: "echo start; sleep 5; echo end".to_string(),
+        timeout_ms: Some(100),  // 100ms timeout
+    };
+    
+    let resp = tool.execute(req).await;
+    
+    assert_eq!(resp.exit_code, 124);
+    assert!(resp.stdout.contains("start"));  // Partial output
+    assert!(!resp.stdout.contains("end"));   // Didn't finish
+    assert!(resp.stderr.contains("timed out"));
+}
+```
+
+## LLM Integration
+
+For LLM agents, serialize requests from LLM output:
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest};
+use serde_json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut tool = BashTool::default();
+    
+    // LLM provides JSON
+    let llm_output = r#"
+    {
+        "commands": "ls /tmp | head -n 5",
+        "timeout_ms": 3000
+    }
+    "#;
+    
+    // Parse and execute
+    let req: ToolRequest = serde_json::from_str(llm_output)?;
+    let resp = tool.execute(req).await;
+    
+    // Return to LLM
+    let result = serde_json::to_string(&resp)?;
+    println!("Result for LLM: {}", result);
+    
+    Ok(())
+}
+```
+
+## Validation
+
+### JSON Schema Validation
+
+```rust
+use bashkit::{BashTool, Tool};
+
+let tool = BashTool::default();
+let schema = tool.input_schema();
+
+// Use schema for validation with a library like jsonschema
+// This ensures LLM output matches expected format
+```
+
+### Command Validation
+
+The tool validates:
+- **Empty commands**: Accepted (returns success with no output)
+- **Invalid syntax**: Caught during parsing, error in response
+- **Missing commands**: Exit code 127 (command not found)
+
+## See Also
+
+- [ToolResponse](/api/tool-response) - Response structure
+- [BashTool](/api/bash-tool) - Tool implementation
+- [Tool](/api/tool-trait) - Tool trait

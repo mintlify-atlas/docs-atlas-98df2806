@@ -1,0 +1,391 @@
+---
+title: BashTool
+description: Virtual bash interpreter implementing the Tool trait for LLM integration
+---
+
+## Overview
+
+`BashTool` is a virtual bash interpreter that implements the [Tool](/api/tool-trait) trait, making it easy to integrate bash execution capabilities into LLM agents and AI systems.
+
+## Quick Start
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest};
+
+#[tokio::main]
+async fn main() {
+    let mut tool = BashTool::default();
+    
+    let request = ToolRequest {
+        commands: "echo 'Hello from BashTool!'".to_string(),
+        timeout_ms: None,
+    };
+    
+    let response = tool.execute(request).await;
+    println!("stdout: {}", response.stdout);
+    println!("exit_code: {}", response.exit_code);
+}
+```
+
+## Creating a BashTool
+
+### Default Constructor
+
+```rust
+use bashkit::BashTool;
+
+let tool = BashTool::default();
+```
+
+Creates a tool with:
+- Default execution limits
+- In-memory virtual filesystem
+- Standard built-in commands (68+)
+
+### Builder Pattern
+
+```rust
+use bashkit::{BashTool, ExecutionLimits};
+
+let tool = BashTool::builder()
+    .username("agent")
+    .hostname("sandbox")
+    .limits(ExecutionLimits::new().max_commands(1000))
+    .env("API_KEY", "secret")
+    .build();
+```
+
+See [BashToolBuilder](#bashtoolbuilder) for all options.
+
+## BashToolBuilder
+
+The builder provides these configuration methods:
+
+### Identity & Environment
+
+#### `username()`
+
+Set virtual username (affects `whoami`, `id`).
+
+```rust
+pub fn username(self, username: impl Into<String>) -> Self
+```
+
+#### `hostname()`
+
+Set virtual hostname (affects `hostname`, `uname -n`).
+
+```rust
+pub fn hostname(self, hostname: impl Into<String>) -> Self
+```
+
+#### `env()`
+
+Add environment variable.
+
+```rust
+pub fn env(self, key: impl Into<String>, value: impl Into<String>) -> Self
+```
+
+### Resource Limits
+
+#### `limits()`
+
+Set execution limits.
+
+```rust
+pub fn limits(self, limits: ExecutionLimits) -> Self
+```
+
+See [ExecutionLimits](/api/execution-limits).
+
+### Custom Commands
+
+#### `builtin()`
+
+Register a custom builtin command.
+
+```rust
+pub fn builtin(self, name: impl Into<String>, builtin: Box<dyn Builtin>) -> Self
+```
+
+**Example:**
+
+```rust
+use bashkit::{BashTool, Builtin, BuiltinContext, ExecResult, async_trait};
+
+struct Status;
+
+#[async_trait]
+impl Builtin for Status {
+    async fn execute(&self, _ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        Ok(ExecResult::ok("All systems operational\n"))
+    }
+    
+    fn llm_hint(&self) -> Option<&'static str> {
+        Some("status: Check system health. No arguments required.")
+    }
+}
+
+let tool = BashTool::builder()
+    .builtin("status", Box::new(Status))
+    .build();
+```
+
+**LLM Hints:**
+If your custom builtin implements `llm_hint()`, the hint will automatically appear in the tool's `help()` and `system_prompt()` output in the NOTES section.
+
+### Python Support
+
+#### `python()`
+
+<Note>
+Requires `python` feature flag.
+</Note>
+
+Enable embedded Python with default limits.
+
+```rust
+#[cfg(feature = "python")]
+pub fn python(self) -> Self
+```
+
+**Example:**
+
+```rust
+let tool = BashTool::builder()
+    .python()
+    .build();
+// Enables python and python3 builtins
+```
+
+#### `python_with_limits()`
+
+Enable Python with custom resource limits.
+
+```rust
+#[cfg(feature = "python")]
+pub fn python_with_limits(self, limits: PythonLimits) -> Self
+```
+
+### Building
+
+#### `build()`
+
+Build the configured BashTool.
+
+```rust
+pub fn build(self) -> BashTool
+```
+
+## Tool Trait Implementation
+
+`BashTool` implements all methods from the [Tool](/api/tool-trait) trait:
+
+### Introspection
+
+```rust
+use bashkit::{BashTool, Tool};
+
+let tool = BashTool::default();
+
+// Tool metadata
+assert_eq!(tool.name(), "bashkit");
+assert!(!tool.version().is_empty());
+
+// Documentation
+let help = tool.help();  // Man-page format
+let prompt = tool.system_prompt();  // Compact for LLMs
+
+// Schemas for validation
+let input_schema = tool.input_schema();
+let output_schema = tool.output_schema();
+```
+
+### Execution
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest};
+
+#[tokio::main]
+async fn main() {
+    let mut tool = BashTool::default();
+    
+    let req = ToolRequest {
+        commands: "ls /tmp".to_string(),
+        timeout_ms: Some(5000),  // 5 second timeout
+    };
+    
+    let resp = tool.execute(req).await;
+    
+    if resp.exit_code == 0 {
+        println!("Output: {}", resp.stdout);
+    } else {
+        eprintln!("Error: {}", resp.stderr);
+    }
+}
+```
+
+### Streaming Execution
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest, ToolStatus};
+use std::sync::{Arc, Mutex};
+
+#[tokio::main]
+async fn main() {
+    let mut tool = BashTool::default();
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let output_cb = output.clone();
+    
+    let req = ToolRequest::new("for i in 1 2 3; do echo $i; done");
+    
+    let resp = tool.execute_with_status(
+        req,
+        Box::new(move |status| {
+            if let Some(chunk) = &status.output {
+                output_cb.lock().unwrap().push(chunk.clone());
+            }
+        }),
+    ).await;
+    
+    println!("Final output: {}", resp.stdout);
+    println!("Chunks received: {}", output.lock().unwrap().len());
+}
+```
+
+## Dynamic Documentation
+
+The tool's documentation adapts to configuration:
+
+### help() with Custom Builtins
+
+```rust
+use bashkit::{BashTool, Builtin, BuiltinContext, ExecResult, async_trait};
+
+struct Deploy;
+
+#[async_trait]
+impl Builtin for Deploy {
+    async fn execute(&self, _ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        Ok(ExecResult::ok("Deployed successfully\n"))
+    }
+    
+    fn llm_hint(&self) -> Option<&'static str> {
+        Some("deploy: Deploy application. Usage: deploy [environment]")
+    }
+}
+
+let tool = BashTool::builder()
+    .builtin("deploy", Box::new(Deploy))
+    .build();
+
+let help = tool.help();
+assert!(help.contains("CONFIGURATION"));
+assert!(help.contains("Custom commands: deploy"));
+assert!(help.contains("NOTES"));
+assert!(help.contains("deploy: Deploy application"));
+```
+
+### system_prompt() with Configuration
+
+```rust
+let tool = BashTool::builder()
+    .username("agent")
+    .build();
+
+let prompt = tool.system_prompt();
+assert!(prompt.contains("Home: /home/agent"));
+```
+
+### Language Warnings
+
+By default, the tool warns about missing language interpreters:
+
+```rust
+let tool = BashTool::default();
+let prompt = tool.system_prompt();
+assert!(prompt.contains("Warning: perl, python/python3 not available."));
+```
+
+After enabling Python:
+
+```rust
+let tool = BashTool::builder().python().build();
+let prompt = tool.system_prompt();
+assert!(!prompt.contains("python/python3 not available"));
+```
+
+## Complete Example
+
+```rust
+use bashkit::{
+    BashTool, Tool, ToolRequest, ExecutionLimits,
+    Builtin, BuiltinContext, ExecResult, async_trait,
+};
+use std::time::Duration;
+
+// Custom builtin for API calls
+struct ApiCall;
+
+#[async_trait]
+impl Builtin for ApiCall {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        let endpoint = ctx.args.first()
+            .ok_or_else(|| bashkit::Error::Execution("endpoint required".into()))?;
+        
+        // Simulate API call
+        Ok(ExecResult::ok(format!("Called {endpoint}\n")))
+    }
+    
+    fn llm_hint(&self) -> Option<&'static str> {
+        Some("api: Call API endpoint. Usage: api <endpoint>")
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    // Build configured tool
+    let mut tool = BashTool::builder()
+        .username("agent")
+        .hostname("prod-sandbox")
+        .env("ENV", "production")
+        .limits(
+            ExecutionLimits::new()
+                .max_commands(5000)
+                .timeout(Duration::from_secs(30))
+        )
+        .builtin("api", Box::new(ApiCall))
+        .build();
+    
+    // Show tool information to LLM
+    println!("Tool: {}", tool.name());
+    println!("{}\n", tool.system_prompt());
+    
+    // Execute commands
+    let req = ToolRequest {
+        commands: r#"
+            echo "Deploying to $ENV"
+            api /deploy
+            echo "Hostname: $(hostname)"
+        "#.to_string(),
+        timeout_ms: Some(10000),
+    };
+    
+    let resp = tool.execute(req).await;
+    
+    println!("Exit code: {}", resp.exit_code);
+    println!("Output:\n{}", resp.stdout);
+    
+    if !resp.stderr.is_empty() {
+        eprintln!("Errors:\n{}", resp.stderr);
+    }
+}
+```
+
+## See Also
+
+- [Tool](/api/tool-trait) - Tool trait specification
+- [ToolRequest](/api/tool-request) - Request structure
+- [ToolResponse](/api/tool-response) - Response structure
+- [Bash](/api/bash) - Direct bash interpreter API

@@ -1,0 +1,324 @@
+---
+title: OverlayFs
+description: Copy-on-write overlay filesystem
+---
+
+## Overview
+
+`OverlayFs` layers a writable upper filesystem on top of a read-only base (lower) filesystem, similar to Docker's overlay storage driver or Linux overlayfs.
+
+## How It Works
+
+- **Reads**: Check upper layer first, fall back to lower layer
+- **Writes**: Always go to the upper layer (copy-on-write)
+- **Deletes**: Tracked via whiteouts - deleted files are hidden but lower layer unchanged
+
+## Use Cases
+
+- **Template systems**: Start from read-only template, allow modifications
+- **Immutable infrastructure**: Keep base images unchanged while allowing runtime changes
+- **Testing**: Run tests against base state without modifying it
+- **Undo support**: Discard upper layer to "reset" to base state
+
+## Creating an OverlayFs
+
+### `new()`
+
+Create with default limits.
+
+```rust
+pub fn new(lower: Arc<dyn FileSystem>) -> Self
+```
+
+<ParamField path="lower" type="Arc<dyn FileSystem>" required>
+  Base (read-only) filesystem
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::{InMemoryFs, OverlayFs};
+use std::sync::Arc;
+
+let base = Arc::new(InMemoryFs::new());
+let overlay = OverlayFs::new(base);
+```
+
+### `with_limits()`
+
+Create with custom resource limits.
+
+```rust
+pub fn with_limits(lower: Arc<dyn FileSystem>, limits: FsLimits) -> Self
+```
+
+<ParamField path="limits" type="FsLimits" required>
+  Resource limits (apply to combined view: upper + lower)
+</ParamField>
+
+## Basic Usage
+
+### Read from Base Layer
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, OverlayFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    // Create base with template files
+    let base = Arc::new(InMemoryFs::new());
+    base.write_file(Path::new("/config/app.conf"), b"debug=false").await?;
+    
+    // Create overlay
+    let overlay = OverlayFs::new(base.clone());
+    
+    // Read from base layer
+    let content = overlay.read_file(Path::new("/config/app.conf")).await?;
+    assert_eq!(content, b"debug=false");
+    
+    Ok(())
+}
+```
+
+### Write to Upper Layer
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, OverlayFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let base = Arc::new(InMemoryFs::new());
+    let overlay = OverlayFs::new(base.clone());
+    
+    // Write goes to upper layer only
+    overlay.write_file(Path::new("/tmp/new.txt"), b"new data").await?;
+    
+    // Visible through overlay
+    assert!(overlay.exists(Path::new("/tmp/new.txt")).await?);
+    
+    // NOT in base layer
+    assert!(!base.exists(Path::new("/tmp/new.txt")).await?);
+    
+    Ok(())
+}
+```
+
+### Copy-on-Write Modification
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, OverlayFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let base = Arc::new(InMemoryFs::new());
+    base.write_file(Path::new("/tmp/config.txt"), b"original").await?;
+    
+    let overlay = OverlayFs::new(base.clone());
+    
+    // Modify through overlay (copy-on-write)
+    overlay.write_file(Path::new("/tmp/config.txt"), b"modified").await?;
+    
+    // Overlay shows modified version
+    let content = overlay.read_file(Path::new("/tmp/config.txt")).await?;
+    assert_eq!(content, b"modified");
+    
+    // Base still has original
+    let original = base.read_file(Path::new("/tmp/config.txt")).await?;
+    assert_eq!(original, b"original");
+    
+    Ok(())
+}
+```
+
+## Deletion and Whiteouts
+
+### Hiding Base Layer Files
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, OverlayFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let base = Arc::new(InMemoryFs::new());
+    base.write_file(Path::new("/tmp/secret.txt"), b"sensitive").await?;
+    
+    let overlay = OverlayFs::new(base.clone());
+    
+    // File exists initially
+    assert!(overlay.exists(Path::new("/tmp/secret.txt")).await?);
+    
+    // Delete through overlay (creates whiteout)
+    overlay.remove(Path::new("/tmp/secret.txt"), false).await?;
+    
+    // Gone from overlay's view
+    assert!(!overlay.exists(Path::new("/tmp/secret.txt")).await?);
+    
+    // But base is unchanged
+    assert!(base.exists(Path::new("/tmp/secret.txt")).await?);
+    
+    Ok(())
+}
+```
+
+### Recreating After Delete
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, OverlayFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let base = Arc::new(InMemoryFs::new());
+    base.write_file(Path::new("/tmp/test.txt"), b"original").await?;
+    
+    let overlay = OverlayFs::new(base);
+    
+    // Delete
+    overlay.remove(Path::new("/tmp/test.txt"), false).await?;
+    assert!(!overlay.exists(Path::new("/tmp/test.txt")).await?);
+    
+    // Recreate with new content
+    overlay.write_file(Path::new("/tmp/test.txt"), b"new").await?;
+    
+    // Now exists with new content
+    let content = overlay.read_file(Path::new("/tmp/test.txt")).await?;
+    assert_eq!(content, b"new");
+    
+    Ok(())
+}
+```
+
+## With Bash
+
+```rust
+use bashkit::{Bash, FileSystem, InMemoryFs, OverlayFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    // Create base with template
+    let base = Arc::new(InMemoryFs::new());
+    base.mkdir(Path::new("/config"), false).await?;
+    base.write_file(Path::new("/config/app.conf"), b"debug=false").await?;
+    
+    // Create overlay - base is read-only, changes go to overlay
+    let overlay = Arc::new(OverlayFs::new(base.clone()));
+    
+    let mut bash = Bash::builder().fs(overlay.clone()).build();
+    
+    // Read from base
+    let result = bash.exec("cat /config/app.conf").await?;
+    assert_eq!(result.stdout, "debug=false");
+    
+    // Modify - changes go to overlay only
+    bash.exec("echo 'debug=true' > /config/app.conf").await?;
+    
+    // Overlay shows modified
+    let result = bash.exec("cat /config/app.conf").await?;
+    assert_eq!(result.stdout, "debug=true\n");
+    
+    // Base unchanged
+    let original = base.read_file(Path::new("/config/app.conf")).await?;
+    assert_eq!(original, b"debug=false");
+    
+    Ok(())
+}
+```
+
+## Directory Listing
+
+Entries from both layers are merged:
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, OverlayFs};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let base = Arc::new(InMemoryFs::new());
+    base.write_file(Path::new("/tmp/base.txt"), b"from base").await?;
+    
+    let overlay = OverlayFs::new(base);
+    overlay.write_file(Path::new("/tmp/upper.txt"), b"from upper").await?;
+    
+    // Both files visible
+    let entries = overlay.read_dir(Path::new("/tmp")).await?;
+    let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains(&"base.txt"));
+    assert!(names.contains(&"upper.txt"));
+    
+    Ok(())
+}
+```
+
+## Upper Layer Access
+
+### `upper()`
+
+Access the upper (writable) layer directly.
+
+```rust
+pub fn upper(&self) -> &InMemoryFs
+```
+
+<ResponseField name="upper" type="&InMemoryFs">
+  Direct reference to upper layer (always InMemoryFs)
+</ResponseField>
+
+**Example:**
+
+```rust
+use bashkit::{InMemoryFs, OverlayFs};
+use std::sync::Arc;
+
+let base = Arc::new(InMemoryFs::new());
+let overlay = OverlayFs::new(base);
+
+// Add files directly to upper layer
+overlay.upper().add_file("/config/app.conf", "debug=true\n", 0o644);
+```
+
+## Resource Limits
+
+Limits apply to the combined filesystem view:
+
+```rust
+use bashkit::{FileSystem, InMemoryFs, OverlayFs, FsLimits};
+use std::sync::Arc;
+use std::path::Path;
+
+#[tokio::main]
+async fn main() {
+    let base = Arc::new(InMemoryFs::new());
+    // Base has 80 bytes
+    base.write_file(Path::new("/tmp/big.txt"), &[b'A'; 80]).await.unwrap();
+    
+    // Overlay limited to 100 bytes total
+    let limits = FsLimits::new().max_total_bytes(100);
+    let overlay = OverlayFs::with_limits(base, limits);
+    
+    // Can only write 20 more bytes (100 - 80 = 20)
+    overlay.write_file(Path::new("/tmp/small.txt"), &[b'B'; 15]).await.unwrap();
+    
+    // This fails - would exceed combined limit
+    let result = overlay.write_file(Path::new("/tmp/extra.txt"), &[b'C'; 30]).await;
+    assert!(result.is_err());
+}
+```
+
+## See Also
+
+- [FileSystem](/api/filesystem) - Trait specification
+- [InMemoryFs](/api/in-memory-fs) - Base filesystem (used for upper layer)
+- [MountableFs](/api/mountable-fs) - Multiple mount points

@@ -1,0 +1,325 @@
+---
+title: ToolResponse
+description: Response structure from tool execution
+---
+
+## Overview
+
+`ToolResponse` contains the result of executing a tool request, including output, exit status, and error information. It's the return value from `Tool::execute()` and `Tool::execute_with_status()`.
+
+## Structure
+
+```rust
+pub struct ToolResponse {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+    pub error: Option<String>,
+}
+```
+
+## Fields
+
+<ResponseField name="stdout" type="String">
+  Standard output captured from the script
+</ResponseField>
+
+<ResponseField name="stderr" type="String">
+  Standard error output captured from the script
+</ResponseField>
+
+<ResponseField name="exit_code" type="i32">
+  Exit status:
+  - `0` = Success
+  - `1-125` = Command error
+  - `126` = Not executable
+  - `127` = Command not found
+  - `124` = Timeout (when `ToolRequest::timeout_ms` exceeded)
+</ResponseField>
+
+<ResponseField name="error" type="Option<String>">
+  Error category when execution failed before running:
+  - `"parse_error"` - Syntax error
+  - `"execution_error"` - Runtime error
+  - `"timeout"` - Execution timeout
+  - `"resource_limit"` - Limit exceeded
+  - `"io_error"` - Filesystem error
+  - `"network_error"` - Network error
+  - `"command_not_found"` - Unknown command
+  - `None` - Script ran (check `exit_code` for success)
+</ResponseField>
+
+## Conversion from ExecResult
+
+`ToolResponse` can be created from `ExecResult`:
+
+```rust
+use bashkit::{ExecResult, ToolResponse};
+
+let exec_result = ExecResult::ok("output\n");
+let tool_response: ToolResponse = exec_result.into();
+
+assert_eq!(tool_response.stdout, "output\n");
+assert_eq!(tool_response.exit_code, 0);
+assert!(tool_response.error.is_none());
+```
+
+## Serialization
+
+`ToolResponse` implements `Serialize` and `Deserialize`:
+
+```rust
+use bashkit::ToolResponse;
+use serde_json;
+
+let resp = ToolResponse {
+    stdout: "Hello\n".to_string(),
+    stderr: String::new(),
+    exit_code: 0,
+    error: None,
+};
+
+let json = serde_json::to_string(&resp).unwrap();
+// {"stdout":"Hello\\n","stderr":"","exit_code":0}
+
+let parsed: ToolResponse = serde_json::from_str(&json).unwrap();
+```
+
+**Note:** The `error` field is omitted from JSON when `None` (via `skip_serializing_if`).
+
+## Usage Examples
+
+### Success Response
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest};
+
+#[tokio::main]
+async fn main() {
+    let mut tool = BashTool::default();
+    let req = ToolRequest::new("echo hello");
+    let resp = tool.execute(req).await;
+    
+    assert_eq!(resp.exit_code, 0);
+    assert_eq!(resp.stdout, "hello\n");
+    assert!(resp.stderr.is_empty());
+    assert!(resp.error.is_none());
+}
+```
+
+### Error Response
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest};
+
+#[tokio::main]
+async fn main() {
+    let mut tool = BashTool::default();
+    let req = ToolRequest::new("nonexistent_command");
+    let resp = tool.execute(req).await;
+    
+    assert_ne!(resp.exit_code, 0);
+    assert!(resp.stderr.contains("command not found"));
+    // error field may be None (script ran) or Some("command_not_found")
+}
+```
+
+### Timeout Response
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest};
+
+#[tokio::main]
+async fn main() {
+    let mut tool = BashTool::default();
+    
+    let req = ToolRequest {
+        commands: "sleep 10".to_string(),
+        timeout_ms: Some(100),
+    };
+    
+    let resp = tool.execute(req).await;
+    
+    assert_eq!(resp.exit_code, 124);
+    assert!(resp.stderr.contains("timed out"));
+    assert_eq!(resp.error, Some("timeout".to_string()));
+}
+```
+
+### Parse Error Response
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest};
+
+#[tokio::main]
+async fn main() {
+    let mut tool = BashTool::default();
+    let req = ToolRequest::new("if true then echo missing_semicolon fi");
+    let resp = tool.execute(req).await;
+    
+    assert_ne!(resp.exit_code, 0);
+    assert!(!resp.stderr.is_empty());
+    assert_eq!(resp.error, Some("parse_error".to_string()));
+}
+```
+
+### Resource Limit Response
+
+```rust
+use bashkit::{BashTool, ExecutionLimits, Tool, ToolRequest};
+
+#[tokio::main]
+async fn main() {
+    let mut tool = BashTool::builder()
+        .limits(ExecutionLimits::new().max_commands(10))
+        .build();
+    
+    let req = ToolRequest::new("for i in {1..100}; do echo $i; done");
+    let resp = tool.execute(req).await;
+    
+    assert_ne!(resp.exit_code, 0);
+    assert!(resp.stderr.contains("maximum command count"));
+    assert_eq!(resp.error, Some("resource_limit".to_string()));
+}
+```
+
+## Checking Success
+
+```rust
+use bashkit::ToolResponse;
+
+fn is_success(resp: &ToolResponse) -> bool {
+    resp.exit_code == 0 && resp.error.is_none()
+}
+
+fn is_error(resp: &ToolResponse) -> bool {
+    resp.exit_code != 0 || resp.error.is_some()
+}
+```
+
+## LLM Integration
+
+For LLM agents, serialize responses back to the agent:
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest, ToolResponse};
+use serde_json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut tool = BashTool::default();
+    
+    // Execute from LLM request
+    let req = ToolRequest::new("ls /tmp | head -n 3");
+    let resp = tool.execute(req).await;
+    
+    // Serialize for LLM
+    let json = serde_json::to_string_pretty(&resp)?;
+    println!("Response for LLM:\n{}", json);
+    
+    Ok(())
+}
+```
+
+**Example JSON:**
+
+```json
+{
+  "stdout": "file1.txt\nfile2.txt\nfile3.txt\n",
+  "stderr": "",
+  "exit_code": 0
+}
+```
+
+## Response Processing
+
+### Extract Lines
+
+```rust
+use bashkit::ToolResponse;
+
+let resp = ToolResponse {
+    stdout: "line1\nline2\nline3\n".to_string(),
+    stderr: String::new(),
+    exit_code: 0,
+    error: None,
+};
+
+let lines: Vec<&str> = resp.stdout.lines().collect();
+assert_eq!(lines.len(), 3);
+```
+
+### Parse JSON Output
+
+```rust
+use bashkit::{BashTool, Tool, ToolRequest};
+use serde_json::Value;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut tool = BashTool::default();
+    
+    let req = ToolRequest::new(r#"echo '{"status": "ok", "count": 42}' | jq ."#);
+    let resp = tool.execute(req).await;
+    
+    if resp.exit_code == 0 {
+        let data: Value = serde_json::from_str(&resp.stdout)?;
+        assert_eq!(data["status"], "ok");
+        assert_eq!(data["count"], 42);
+    }
+    
+    Ok(())
+}
+```
+
+### Combine Output
+
+```rust
+use bashkit::ToolResponse;
+
+let resp = ToolResponse {
+    stdout: "Regular output\n".to_string(),
+    stderr: "Warning: something\n".to_string(),
+    exit_code: 0,
+    error: None,
+};
+
+let combined = format!("{}{}", resp.stdout, resp.stderr);
+```
+
+## Error Categorization
+
+The `error` field helps distinguish failure modes:
+
+| Error Category | Meaning | Example |
+|---------------|---------|--------|
+| `None` | Script executed | Normal completion |
+| `"parse_error"` | Invalid syntax | Missing `;` or `fi` |
+| `"timeout"` | Execution timeout | `sleep 100` with 1s limit |
+| `"resource_limit"` | Limit exceeded | Too many commands |
+| `"command_not_found"` | Unknown command | `nonexistent` |
+| `"io_error"` | Filesystem error | Write to readonly file |
+| `"network_error"` | Network failure | `curl` to blocked URL |
+| `"execution_error"` | Runtime error | Division by zero |
+| `"internal_error"` | Internal failure | Rare internal error |
+
+## JSON Schema
+
+Get the schema for validation:
+
+```rust
+use bashkit::{BashTool, Tool};
+
+let tool = BashTool::default();
+let schema = tool.output_schema();
+
+// Use with a JSON schema validator
+// Ensures response matches expected structure
+```
+
+## See Also
+
+- [ToolRequest](/api/tool-request) - Request structure
+- [BashTool](/api/bash-tool) - Tool implementation
+- [ExecResult](/api/exec-result) - Direct execution result
+- [Tool](/api/tool-trait) - Tool trait

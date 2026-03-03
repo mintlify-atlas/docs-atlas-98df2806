@@ -1,0 +1,394 @@
+---
+title: NetworkAllowlist
+description: URL allowlist for network access control
+---
+
+## Overview
+
+`NetworkAllowlist` provides whitelist-based security for network access in bash scripts. URLs must match an entry in the allowlist to be accessed by `curl` or `wget` builtins.
+
+## Security Model
+
+- **Default-deny**: Empty allowlist blocks all URLs
+- **Literal matching**: No DNS resolution (prevents DNS rebinding)
+- **Scheme validation**: `https` vs `http` must match exactly
+- **Host validation**: Exact host match (no wildcards)
+- **Port validation**: Port must match (defaults: 443 for https, 80 for http)
+- **Path prefix**: Pattern path is prefix of request path
+
+## Creating an Allowlist
+
+### `new()`
+
+Create empty allowlist (blocks all URLs).
+
+```rust
+pub fn new() -> Self
+```
+
+**Example:**
+
+```rust
+use bashkit::NetworkAllowlist;
+
+let allowlist = NetworkAllowlist::new();
+assert!(!allowlist.is_allowed("https://example.com"));
+```
+
+### `allow_all()`
+
+Create allowlist that allows all URLs.
+
+```rust
+pub fn allow_all() -> Self
+```
+
+<Warning>
+Dangerous! Only use for testing or when script is fully trusted.
+</Warning>
+
+**Example:**
+
+```rust
+use bashkit::NetworkAllowlist;
+
+let allowlist = NetworkAllowlist::allow_all();
+assert!(allowlist.is_allowed("https://example.com"));
+assert!(allowlist.is_allowed("http://localhost:8080"));
+```
+
+## Adding Patterns
+
+### `allow()`
+
+Add a single URL pattern.
+
+```rust
+pub fn allow(self, pattern: impl Into<String>) -> Self
+```
+
+<ParamField path="pattern" type="impl Into<String>" required>
+  URL pattern to allow. Can be:
+  - Full URL: `https://api.example.com/v1`
+  - Host only: `https://example.com`
+  - With port: `http://localhost:8080`
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::NetworkAllowlist;
+
+let allowlist = NetworkAllowlist::new()
+    .allow("https://api.example.com")        // Allow entire host
+    .allow("https://cdn.example.com/assets/"); // Allow path prefix
+
+assert!(allowlist.is_allowed("https://api.example.com/v1/users"));
+assert!(allowlist.is_allowed("https://cdn.example.com/assets/logo.png"));
+assert!(!allowlist.is_allowed("https://evil.com"));
+```
+
+### `allow_many()`
+
+Add multiple patterns at once.
+
+```rust
+pub fn allow_many(self, patterns: impl IntoIterator<Item = impl Into<String>>) -> Self
+```
+
+**Example:**
+
+```rust
+use bashkit::NetworkAllowlist;
+
+let allowlist = NetworkAllowlist::new()
+    .allow_many(vec![
+        "https://api.example.com",
+        "https://cdn.example.com",
+        "http://localhost:3000",
+    ]);
+```
+
+## Checking URLs
+
+### `check()`
+
+Check if a URL is allowed (detailed result).
+
+```rust
+pub fn check(&self, url: &str) -> UrlMatch
+```
+
+<ParamField path="url" type="&str" required>
+  URL to check
+</ParamField>
+
+<ResponseField name="result" type="UrlMatch">
+  Match result:
+  - `UrlMatch::Allowed` - URL is allowed
+  - `UrlMatch::Blocked { reason }` - URL blocked
+  - `UrlMatch::Invalid { reason }` - URL malformed
+</ResponseField>
+
+**Example:**
+
+```rust
+use bashkit::{NetworkAllowlist, UrlMatch};
+
+let allowlist = NetworkAllowlist::new().allow("https://api.example.com");
+
+match allowlist.check("https://api.example.com/users") {
+    UrlMatch::Allowed => println!("Request allowed"),
+    UrlMatch::Blocked { reason } => println!("Blocked: {}", reason),
+    UrlMatch::Invalid { reason } => println!("Invalid: {}", reason),
+}
+```
+
+### `is_allowed()`
+
+Check if a URL is allowed (boolean).
+
+```rust
+pub fn is_allowed(&self, url: &str) -> bool
+```
+
+**Example:**
+
+```rust
+use bashkit::NetworkAllowlist;
+
+let allowlist = NetworkAllowlist::new().allow("https://example.com");
+
+if allowlist.is_allowed("https://example.com/api") {
+    println!("Proceeding with request");
+}
+```
+
+### `is_enabled()`
+
+Check if network access is enabled.
+
+```rust
+pub fn is_enabled(&self) -> bool
+```
+
+<ResponseField name="enabled" type="bool">
+  `true` if has any patterns or `allow_all`, `false` if empty allowlist
+</ResponseField>
+
+**Example:**
+
+```rust
+let empty = NetworkAllowlist::new();
+assert!(!empty.is_enabled());
+
+let with_pattern = NetworkAllowlist::new().allow("https://example.com");
+assert!(with_pattern.is_enabled());
+```
+
+## Pattern Matching Rules
+
+### Scheme Matching
+
+Scheme must match exactly:
+
+```rust
+let allowlist = NetworkAllowlist::new().allow("https://example.com");
+
+assert!(allowlist.is_allowed("https://example.com"));   // ✓ Match
+assert!(!allowlist.is_allowed("http://example.com"));   // ✗ Different scheme
+```
+
+### Host Matching
+
+Host must match exactly (no wildcards):
+
+```rust
+let allowlist = NetworkAllowlist::new().allow("https://api.example.com");
+
+assert!(allowlist.is_allowed("https://api.example.com"));  // ✓ Exact match
+assert!(!allowlist.is_allowed("https://example.com"));     // ✗ Different host
+assert!(!allowlist.is_allowed("https://v2.api.example.com")); // ✗ Subdomain
+```
+
+### Port Matching
+
+Port must match (defaults apply):
+
+```rust
+let allowlist = NetworkAllowlist::new().allow("http://localhost:8080");
+
+assert!(allowlist.is_allowed("http://localhost:8080/api")); // ✓ Match
+assert!(!allowlist.is_allowed("http://localhost:3000"));    // ✗ Different port
+assert!(!allowlist.is_allowed("http://localhost"));         // ✗ Default port 80 != 8080
+```
+
+**Default Ports:**
+- `https://host` = `https://host:443`
+- `http://host` = `http://host:80`
+
+### Path Prefix Matching
+
+Pattern path is treated as a prefix:
+
+```rust
+let allowlist = NetworkAllowlist::new().allow("https://api.example.com/v1");
+
+assert!(allowlist.is_allowed("https://api.example.com/v1"));        // ✓ Exact
+assert!(allowlist.is_allowed("https://api.example.com/v1/"));       // ✓ With slash
+assert!(allowlist.is_allowed("https://api.example.com/v1/users"));  // ✓ Prefix match
+assert!(!allowlist.is_allowed("https://api.example.com/v2"));       // ✗ Different path
+assert!(!allowlist.is_allowed("https://api.example.com/v10"));      // ✗ Not path boundary
+```
+
+**Path Boundaries:**
+To prevent `/api` from matching `/apiv2`, path prefix matching requires:
+- Exact match, or
+- Next character is `/`, `?`, or `#`
+
+## With Bash
+
+### Enabling Network Access
+
+```rust
+use bashkit::{Bash, NetworkAllowlist};
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::builder()
+        .network(
+            NetworkAllowlist::new()
+                .allow("https://httpbin.org")
+        )
+        .build();
+    
+    // curl now works for allowed URLs
+    let result = bash.exec("curl -s https://httpbin.org/get").await?;
+    assert!(result.stdout.contains("httpbin.org"));
+    
+    // Blocked URLs fail
+    let result = bash.exec("curl -s https://evil.com").await?;
+    assert_ne!(result.exit_code, 0);
+    
+    Ok(())
+}
+```
+
+### API Access Example
+
+```rust
+use bashkit::{Bash, NetworkAllowlist};
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::builder()
+        .network(
+            NetworkAllowlist::new()
+                .allow("https://api.github.com")
+                .allow("https://api.example.com/v1")
+        )
+        .env("API_TOKEN", "token123")
+        .build();
+    
+    let result = bash.exec(r#"
+        curl -H "Authorization: Bearer $API_TOKEN" \
+             https://api.example.com/v1/users
+    "#).await?;
+    
+    Ok(())
+}
+```
+
+## Security Features
+
+### Credential Redaction
+
+Credentials are redacted from error messages:
+
+```rust
+use bashkit::NetworkAllowlist;
+
+let allowlist = NetworkAllowlist::new();
+
+let result = allowlist.check("https://user:pass@blocked.com");
+// Error message does NOT contain "pass"
+```
+
+### Response Limits
+
+When network is enabled, BashKit enforces:
+- **10MB response size limit**: Prevents memory exhaustion
+- **30 second timeout**: Prevents hanging
+- **No automatic redirects**: Prevents allowlist bypass
+- **Zip bomb protection**: For compressed responses
+
+### Threat Mitigations
+
+| Threat ID | Description | Mitigation |
+|-----------|-------------|------------|
+| TM-NET-001 | DNS spoofing | Literal host matching, no DNS |
+| TM-NET-002 | DNS rebinding | Allowlist uses literal strings |
+| TM-NET-004 | IP bypass | IPs must be explicitly allowed |
+| TM-NET-005 | Port scanning | Port must match allowlist |
+| TM-NET-006 | Protocol downgrade | Scheme must match exactly |
+| TM-NET-007 | Subdomain bypass | Exact host match required |
+| TM-INF-010 | Data exfiltration | Default-deny blocks unauthorized |
+
+## Examples
+
+### Multiple APIs
+
+```rust
+use bashkit::NetworkAllowlist;
+
+let allowlist = NetworkAllowlist::new()
+    .allow("https://api.github.com")
+    .allow("https://api.openai.com")
+    .allow("https://api.anthropic.com")
+    .allow("https://cdn.example.com/assets/");
+```
+
+### Development vs Production
+
+```rust
+use bashkit::NetworkAllowlist;
+
+let allowlist = if cfg!(debug_assertions) {
+    // Development: allow localhost
+    NetworkAllowlist::new()
+        .allow("http://localhost:3000")
+        .allow("http://localhost:8080")
+        .allow("https://api.example.com")
+} else {
+    // Production: only production APIs
+    NetworkAllowlist::new()
+        .allow("https://api.example.com")
+        .allow("https://cdn.example.com")
+};
+```
+
+### Path-Specific Access
+
+```rust
+use bashkit::NetworkAllowlist;
+
+// Only allow specific API endpoints
+let allowlist = NetworkAllowlist::new()
+    .allow("https://api.example.com/v1/public")
+    .allow("https://api.example.com/v1/users")
+    .allow("https://api.example.com/health");
+
+// These work
+assert!(allowlist.is_allowed("https://api.example.com/v1/public/info"));
+assert!(allowlist.is_allowed("https://api.example.com/v1/users/123"));
+assert!(allowlist.is_allowed("https://api.example.com/health"));
+
+// These are blocked
+assert!(!allowlist.is_allowed("https://api.example.com/admin"));
+assert!(!allowlist.is_allowed("https://api.example.com/v1/private"));
+```
+
+## See Also
+
+- [BashBuilder](/api/bash-builder) - Configure network access
+- Threat model documentation for security details

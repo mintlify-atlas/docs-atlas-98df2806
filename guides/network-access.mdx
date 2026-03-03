@@ -1,0 +1,362 @@
+---
+title: Network Access with NetworkAllowlist
+description: Configure secure HTTP access for curl and wget commands using URL allowlists
+---
+
+BashKit provides `curl` and `wget` builtins for HTTP access, but network access is **disabled by default**. Use `NetworkAllowlist` to enable HTTP requests with a security-focused allowlist.
+
+## Security Model
+
+The allowlist uses a **default-deny model** with the following security features:
+
+- Only URLs matching allowlist patterns can be accessed
+- Pattern matching is literal (no DNS resolution) to prevent DNS rebinding (TM-NET-001, TM-NET-002)
+- Scheme, host, port, and path prefix are all validated
+- 10MB response size limit prevents memory exhaustion
+- 30 second timeout prevents hanging
+- No automatic redirects prevents allowlist bypass
+- Zip bomb protection for compressed responses
+
+Source: `crates/bashkit/src/lib.rs:260-267`
+
+### Threat Mitigations
+
+The allowlist mitigates these security threats:
+
+- **TM-NET-001**: DNS spoofing → literal host matching, no DNS resolution
+- **TM-NET-002**: DNS rebinding → allowlist uses literal strings
+- **TM-NET-004**: IP-based bypass → IPs must be explicitly allowed
+- **TM-NET-005**: Port scanning → port must match allowlist entry
+- **TM-NET-006**: Protocol downgrade → scheme must match exactly
+- **TM-NET-007**: Subdomain bypass → exact host match required
+- **TM-INF-010**: Data exfiltration → default-deny blocks unauthorized destinations
+
+Source: `crates/bashkit/src/network/allowlist.rs:5-16`
+
+## Enabling Network Access
+
+<Steps>
+  <Step title="Create an allowlist">
+    Create a `NetworkAllowlist` and add URL patterns:
+    
+    ```rust
+    use bashkit::{Bash, NetworkAllowlist};
+    
+    let allowlist = NetworkAllowlist::new()
+        .allow("https://api.example.com")
+        .allow("https://cdn.example.com/assets");
+    ```
+    
+    Source: `crates/bashkit/src/network/allowlist.rs:43-48`
+  </Step>
+  
+  <Step title="Configure the builder">
+    Pass the allowlist to `BashBuilder::network()`:
+    
+    ```rust
+    let mut bash = Bash::builder()
+        .network(allowlist)
+        .build();
+    ```
+    
+    Source: `crates/bashkit/src/lib.rs:839-841`
+  </Step>
+  
+  <Step title="Use curl or wget">
+    Scripts can now access allowed URLs:
+    
+    ```rust
+    let result = bash.exec("curl -s https://api.example.com/v1/users").await?;
+    let result = bash.exec("wget -O- https://cdn.example.com/assets/data.json").await?;
+    ```
+    
+    Source: `crates/bashkit/src/lib.rs:254-256`
+  </Step>
+</Steps>
+
+## Pattern Matching
+
+URL patterns are matched against requested URLs with strict validation:
+
+<ParamField path="scheme" type="string">
+  Must match exactly (https vs http).
+  
+  ```rust
+  let allowlist = NetworkAllowlist::new()
+      .allow("https://api.example.com");
+  
+  // ✓ Allowed
+  allowlist.is_allowed("https://api.example.com");
+  
+  // ✗ Blocked (different scheme)
+  allowlist.is_allowed("http://api.example.com");
+  ```
+  
+  Source: `crates/bashkit/src/network/allowlist.rs:171-174`
+</ParamField>
+
+<ParamField path="host" type="string">
+  Must match exactly (no wildcards, no subdomain matching).
+  
+  ```rust
+  let allowlist = NetworkAllowlist::new()
+      .allow("https://api.example.com");
+  
+  // ✓ Allowed
+  allowlist.is_allowed("https://api.example.com");
+  
+  // ✗ Blocked (different host)
+  allowlist.is_allowed("https://other.example.com");
+  ```
+  
+  Source: `crates/bashkit/src/network/allowlist.rs:176-184`
+</ParamField>
+
+<ParamField path="port" type="number">
+  Must match (defaults apply: 443 for https, 80 for http).
+  
+  ```rust
+  let allowlist = NetworkAllowlist::new()
+      .allow("http://localhost:8080");
+  
+  // ✓ Allowed
+  allowlist.is_allowed("http://localhost:8080/api");
+  
+  // ✗ Blocked (different port)
+  allowlist.is_allowed("http://localhost:3000");
+  
+  // ✗ Blocked (default port 80)
+  allowlist.is_allowed("http://localhost");
+  ```
+  
+  Source: `crates/bashkit/src/network/allowlist.rs:186-191`
+</ParamField>
+
+<ParamField path="path" type="string">
+  Pattern path is treated as a prefix.
+  
+  ```rust
+  let allowlist = NetworkAllowlist::new()
+      .allow("https://api.example.com/v1");
+  
+  // ✓ Allowed (path prefix match)
+  allowlist.is_allowed("https://api.example.com/v1");
+  allowlist.is_allowed("https://api.example.com/v1/");
+  allowlist.is_allowed("https://api.example.com/v1/users");
+  
+  // ✗ Blocked (different path)
+  allowlist.is_allowed("https://api.example.com/v2");
+  
+  // ✗ Blocked (not at path boundary)
+  allowlist.is_allowed("https://api.example.com/v10");
+  ```
+  
+  Source: `crates/bashkit/src/network/allowlist.rs:193-220`
+</ParamField>
+
+Source: `crates/bashkit/src/network/allowlist.rs:56-62`
+
+## Examples
+
+### Allow Specific APIs
+
+```rust
+use bashkit::{Bash, NetworkAllowlist};
+
+let allowlist = NetworkAllowlist::new()
+    .allow("https://api.github.com")
+    .allow("https://api.openai.com");
+
+let mut bash = Bash::builder()
+    .network(allowlist)
+    .build();
+
+// ✓ These work
+bash.exec("curl -s https://api.github.com/users/octocat").await?;
+bash.exec("curl -s https://api.openai.com/v1/models").await?;
+
+// ✗ This fails (not in allowlist)
+bash.exec("curl -s https://evil.com").await?;
+```
+
+Source: `crates/bashkit/src/network/allowlist.rs:43-54`
+
+### Allow Path Prefixes
+
+Restrict access to specific paths within a domain:
+
+```rust
+let allowlist = NetworkAllowlist::new()
+    .allow("https://cdn.example.com/public/")
+    .allow("https://api.example.com/v1/");
+
+let mut bash = Bash::builder()
+    .network(allowlist)
+    .build();
+
+// ✓ Allowed (matches path prefix)
+bash.exec("curl https://cdn.example.com/public/logo.png").await?;
+bash.exec("curl https://api.example.com/v1/users").await?;
+
+// ✗ Blocked (different path)
+bash.exec("curl https://cdn.example.com/private/secret.txt").await?;
+bash.exec("curl https://api.example.com/v2/users").await?;
+```
+
+Source: `crates/bashkit/src/network/allowlist.rs:293-320`
+
+### Allow Multiple Patterns
+
+Add multiple patterns for different services:
+
+```rust
+let allowlist = NetworkAllowlist::new()
+    .allow("https://api.example.com")
+    .allow("https://cdn.example.com")
+    .allow("http://localhost:3000");
+
+let mut bash = Bash::builder()
+    .network(allowlist)
+    .build();
+
+// All of these work
+bash.exec("curl https://api.example.com/v1").await?;
+bash.exec("curl https://cdn.example.com/assets/logo.png").await?;
+bash.exec("curl http://localhost:3000/health").await?;
+```
+
+Source: `crates/bashkit/src/network/allowlist.rs:345-368`
+
+### Allow Many at Once
+
+Use `allow_many()` to add multiple patterns:
+
+```rust
+let apis = vec![
+    "https://api.github.com",
+    "https://api.openai.com",
+    "https://api.anthropic.com",
+];
+
+let allowlist = NetworkAllowlist::new()
+    .allow_many(apis);
+```
+
+Source: `crates/bashkit/src/network/allowlist.rs:119-125`
+
+## Checking URLs
+
+You can check if a URL is allowed before using it:
+
+```rust
+use bashkit::NetworkAllowlist;
+
+let allowlist = NetworkAllowlist::new()
+    .allow("https://api.example.com");
+
+// Simple boolean check
+if allowlist.is_allowed("https://api.example.com/v1/users") {
+    println!("URL is allowed");
+}
+
+// Detailed check with reason
+use bashkit::network::UrlMatch;
+
+match allowlist.check("https://evil.com") {
+    UrlMatch::Allowed => println!("Allowed"),
+    UrlMatch::Blocked { reason } => println!("Blocked: {}", reason),
+    UrlMatch::Invalid { reason } => println!("Invalid: {}", reason),
+}
+```
+
+Source: `crates/bashkit/src/network/allowlist.rs:127-161`, `223-229`
+
+## Allow All (Dangerous)
+
+<Warning>
+  **Use only for testing or fully trusted scripts.** This disables all network security.
+</Warning>
+
+```rust
+let allowlist = NetworkAllowlist::allow_all();
+
+let mut bash = Bash::builder()
+    .network(allowlist)
+    .build();
+
+// ⚠️ Any URL can be accessed
+bash.exec("curl https://any-url.com").await?;
+```
+
+Source: `crates/bashkit/src/network/allowlist.rs:90-101`
+
+This should **never** be used in production environments where scripts may be untrusted.
+
+Source: `crates/bashkit/src/lib.rs:844-847`
+
+## Error Handling
+
+When a URL is blocked, curl/wget return non-zero exit codes:
+
+```rust
+let allowlist = NetworkAllowlist::new()
+    .allow("https://allowed.com");
+
+let mut bash = Bash::builder()
+    .network(allowlist)
+    .build();
+
+let result = bash.exec("curl https://blocked.com").await?;
+assert_ne!(result.exit_code, 0);
+assert!(result.stderr.contains("not in allowlist"));
+```
+
+Credentials in URLs are redacted from error messages:
+
+```rust
+let result = bash.exec("curl https://user:pass@blocked.com").await?;
+// Error message will NOT contain "user" or "pass"
+```
+
+Source: `crates/bashkit/src/network/allowlist.rs:20-33`, `393-420`
+
+## Complete Example
+
+```rust
+use bashkit::{Bash, NetworkAllowlist};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Configure allowlist for specific APIs
+    let allowlist = NetworkAllowlist::new()
+        .allow("https://api.github.com")
+        .allow("https://httpbin.org")
+        .allow("http://localhost:8080");
+    
+    let mut bash = Bash::builder()
+        .network(allowlist)
+        .build();
+    
+    // Fetch GitHub user data
+    let result = bash.exec(r#"
+        curl -s https://api.github.com/users/octocat |
+        jq -r '.name'
+    "#).await?;
+    
+    println!("Name: {}", result.stdout);
+    
+    // Test HTTP methods
+    bash.exec(r#"
+        curl -X POST https://httpbin.org/post \
+            -H 'Content-Type: application/json' \
+            -d '{"key":"value"}'
+    "#).await?;
+    
+    // Download and save
+    bash.exec("wget -O /tmp/data.json https://httpbin.org/json").await?;
+    let content = bash.exec("cat /tmp/data.json").await?;
+    println!("{}", content.stdout);
+    
+    Ok(())
+}
+```

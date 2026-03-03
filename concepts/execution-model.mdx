@@ -1,0 +1,400 @@
+---
+title: Execution model
+description: How BashKit executes commands in a stateless, sandboxed environment
+---
+
+BashKit executes bash scripts in an isolated, stateless environment with strict resource limits.
+
+## Stateless Execution
+
+Each command executes to completion before the next begins. There are no background processes or persistent jobs.
+
+### No Background Execution
+
+Background execution (`&`) is intentionally not supported:
+
+```bash
+# This will NOT work as expected
+echo "background" &
+echo "foreground"
+```
+
+Rationale (from `specs/009-implementation-status.md:19`):
+- **Stateless model** - No persistent processes between commands
+- **Resource accounting** - Prevents orphaned processes
+- **Deterministic execution** - Simplifies reasoning about script behavior
+
+### No Job Control
+
+Job control commands (`jobs`, `fg`, `bg`) are not implemented:
+
+```bash
+# Not supported
+jobs      # List jobs
+fg %1     # Foreground job
+bg %1     # Background job
+```
+
+These features require persistent process state across commands, which conflicts with the stateless execution model.
+
+## Async-First Architecture
+
+All execution is async using tokio:
+
+```rust
+let mut bash = Bash::new();
+let result = bash.exec("echo hello").await?;
+```
+
+### Benefits
+
+- **Non-blocking I/O** - File operations don't block the executor
+- **Timeouts** - Enforce execution limits without threads
+- **Concurrent execution** - Run multiple scripts in parallel
+- **Streaming output** - Process output as it's generated
+
+### Streaming Output
+
+Use `exec_streaming` for real-time output:
+
+```rust
+use bashkit::OutputCallback;
+
+let callback: OutputCallback = Box::new(|line| {
+    println!("[stdout] {}", line);
+});
+
+let result = bash.exec_streaming("ls -la", Some(callback), None).await?;
+```
+
+## Command Execution Flow
+
+<Steps>
+  <Step title="Parse">
+    The script is parsed into an Abstract Syntax Tree (AST):
+    
+    ```
+    echo hello | grep h
+    ↓
+    Pipeline(
+      Command("echo", ["hello"]),
+      Command("grep", ["h"])
+    )
+    ```
+  </Step>
+  
+  <Step title="Execute">
+    The interpreter walks the AST and executes each node:
+    
+    - Variables are expanded
+    - Builtins are called directly (no subprocess spawning)
+    - Pipelines connect stdout → stdin
+    - Redirections modify file descriptors
+  </Step>
+  
+  <Step title="Return">
+    Output is collected and returned:
+    
+    ```rust
+    ExecResult {
+        stdout: "hello\n",
+        stderr: "",
+        exit_code: 0,
+    }
+    ```
+  </Step>
+</Steps>
+
+## Builtin Execution
+
+All commands are implemented as builtins - there are no external processes:
+
+```rust
+// echo is a builtin
+bash.exec("echo hello").await?;
+
+// grep is a builtin
+bash.exec("grep pattern file.txt").await?;
+
+// Even curl is a builtin (using reqwest)
+bash.exec("curl https://api.example.com").await?;
+```
+
+### Builtin Trait
+
+Builtins implement the `Builtin` trait:
+
+```rust
+#[async_trait]
+pub trait Builtin: Send + Sync {
+    async fn execute(
+        &self,
+        ctx: &mut Context,
+        args: &[String],
+        stdin: Option<String>,
+    ) -> Result<(String, i32)>;
+}
+```
+
+**Context** provides:
+- Virtual filesystem access
+- Environment variables
+- Current working directory
+- Output callbacks
+- Resource limit tracking
+
+See [Custom builtins guide](/guides/custom-builtins) for details.
+
+## Pipelines
+
+Pipelines connect stdout of one command to stdin of the next:
+
+```bash
+echo -e "line1\nline2\nline3" | grep "2" | wc -l
+```
+
+Execution:
+
+1. `echo` writes "line1\nline2\nline3" to its stdout
+2. `grep` reads from stdin, filters for "2", writes "line2" to stdout
+3. `wc -l` reads from stdin, counts lines, writes "1" to stdout
+
+All in-memory - no pipes or file descriptors are created.
+
+## Redirections
+
+Redirections modify input/output destinations:
+
+```bash
+# Write to file
+echo "data" > /tmp/file.txt
+
+# Append to file
+echo "more" >> /tmp/file.txt
+
+# Read from file
+grep "pattern" < /tmp/file.txt
+
+# Here-string
+grep "pattern" <<< "some input"
+
+# Stderr redirection
+command 2> /tmp/errors.txt
+
+# Combined output
+command &> /tmp/all-output.txt
+```
+
+All file operations use the virtual filesystem.
+
+## Control Flow
+
+BashKit supports full bash control flow:
+
+### Conditionals
+
+```bash
+if [ -f /tmp/file.txt ]; then
+    echo "File exists"
+else
+    echo "File not found"
+fi
+```
+
+### Loops
+
+```bash
+# For loop
+for i in 1 2 3; do
+    echo "Number: $i"
+done
+
+# While loop
+count=0
+while [ $count -lt 5 ]; do
+    echo $count
+    count=$((count + 1))
+done
+```
+
+<Note>
+Loops are subject to `max_loop_iterations` and `max_total_loop_iterations` limits. See [Resource limits](/concepts/resource-limits).
+</Note>
+
+### Case Statements
+
+```bash
+case $1 in
+    start)
+        echo "Starting..."
+        ;;
+    stop)
+        echo "Stopping..."
+        ;;
+    *)
+        echo "Unknown command"
+        ;;
+esac
+```
+
+## Functions
+
+Both POSIX and bash-style functions are supported:
+
+```bash
+# POSIX style
+greet() {
+    echo "Hello, $1!"
+}
+
+# Bash style
+function farewell {
+    echo "Goodbye, $1!"
+}
+
+greet "World"
+farewell "World"
+```
+
+**Recursion limits:**
+
+```rust
+let limits = ExecutionLimits::new()
+    .max_function_depth(100); // Default
+```
+
+Functions deeper than this will fail with `ResourceLimitExceeded::FunctionDepth`.
+
+## Variable Scope
+
+Variables follow bash scoping rules:
+
+```bash
+# Global variable
+FOO=global
+
+function test {
+    # Local variable
+    local FOO=local
+    echo $FOO  # "local"
+}
+
+test
+echo $FOO  # "global"
+```
+
+### Environment Variables
+
+```bash
+# Set environment variable
+export PATH=/usr/bin:/bin
+
+# Access environment variable
+echo $HOME
+
+# Unset variable
+unset FOO
+```
+
+Environment variables are scoped to the `Bash` instance and don't affect the host process.
+
+## Virtual Re-invocation
+
+The `bash` and `sh` commands are virtual re-invocations of the same interpreter:
+
+```bash
+# Execute in sub-interpreter
+bash -c "echo hello"
+
+# Syntax check
+bash -n script.sh
+
+# Version info
+bash --version
+```
+
+From `specs/009-implementation-status.md:43-50`:
+- Returns BashKit version (not host bash)
+- Executes within the same virtual environment
+- Variables are shared with parent interpreter
+- Resource limits are inherited
+
+<Warning>
+This is NOT spawning a subprocess - it's the same interpreter executing the commands.
+</Warning>
+
+## Subshells
+
+Subshells execute in isolated state:
+
+```bash
+# Subshell
+FOO=outer
+(FOO=inner; echo $FOO)  # "inner"
+echo $FOO               # "outer"
+
+# Command substitution (runs in subshell)
+RESULT=$(echo hello)
+echo $RESULT  # "hello"
+```
+
+Subshell isolation:
+- Variable changes don't affect parent
+- Directory changes don't affect parent
+- Trap handlers are isolated
+
+## Exit Codes
+
+Commands return exit codes following bash conventions:
+
+- `0` - Success
+- `1` - General error
+- `2` - Misuse of shell builtin
+- `126` - Command cannot execute
+- `127` - Command not found
+- `128+N` - Fatal signal N
+
+Exit codes are truncated to 8-bit range (0-255):
+
+```bash
+exit 256  # Actually exits with 0
+exit 257  # Actually exits with 1
+```
+
+### Error Handling
+
+```bash
+# Check exit code
+if grep "pattern" file.txt; then
+    echo "Found"
+fi
+
+# Conditional execution
+command1 && command2  # Run command2 only if command1 succeeds
+command1 || command2  # Run command2 only if command1 fails
+
+# Exit on error
+set -e
+```
+
+See [Error handling guide](/guides/error-handling) for Rust-level error handling.
+
+## Resource Limits
+
+All execution is subject to resource limits:
+
+- **Command count** - Maximum commands executed
+- **Loop iterations** - Per-loop and total limits
+- **Function depth** - Recursion limit
+- **Timeout** - Maximum execution time
+- **Input size** - Maximum script size
+- **AST depth** - Maximum nesting depth
+
+See [Resource limits](/concepts/resource-limits) for details.
+
+## See Also
+
+- [Resource limits](/concepts/resource-limits)
+- [Custom builtins](/guides/custom-builtins)
+- [Error handling](/guides/error-handling)
+- [POSIX compliance](/resources/posix-compliance)

@@ -1,0 +1,307 @@
+---
+title: Bash
+description: Main entry point for the BashKit interpreter
+---
+
+## Overview
+
+The `Bash` struct is the main entry point for BashKit. It provides a virtual bash interpreter with an in-memory virtual filesystem, POSIX-compliant command execution, and comprehensive resource limits.
+
+## Creating an Instance
+
+### `Bash::new()`
+
+Create a new Bash instance with default settings.
+
+```rust
+use bashkit::Bash;
+
+let mut bash = Bash::new();
+```
+
+**Default Configuration:**
+- In-memory virtual filesystem (InMemoryFs)
+- Default execution limits (10,000 commands, 30s timeout)
+- Standard directories: `/`, `/tmp`, `/home/user`, `/dev`
+- Default devices: `/dev/null`
+
+### `Bash::builder()`
+
+Create a BashBuilder for customized configuration.
+
+```rust
+use bashkit::{Bash, ExecutionLimits};
+
+let mut bash = Bash::builder()
+    .env("API_KEY", "secret123")
+    .username("deploy")
+    .hostname("prod-server")
+    .limits(ExecutionLimits::new().max_commands(100))
+    .build();
+```
+
+See [BashBuilder](/api/bash-builder) for all configuration options.
+
+## Executing Scripts
+
+### `exec()`
+
+Execute a bash script and return the result.
+
+```rust
+pub async fn exec(&mut self, script: &str) -> Result<ExecResult>
+```
+
+<ParamField path="script" type="&str" required>
+  Bash script to execute (like `bash -c "commands"`)
+</ParamField>
+
+<ResponseField name="ExecResult" type="Result<ExecResult>">
+  Execution result containing stdout, stderr, and exit code. See [ExecResult](/api/exec-result).
+</ResponseField>
+
+**Example:**
+
+```rust
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::new();
+    
+    let result = bash.exec("echo 'Hello, World!'").await?;
+    assert_eq!(result.stdout, "Hello, World!\n");
+    assert_eq!(result.exit_code, 0);
+    
+    Ok(())
+}
+```
+
+**Supported Bash Features:**
+- Variables and parameter expansion: `$VAR`, `${VAR:-default}`, `${#VAR}`
+- Command substitution: `$(cmd)`
+- Arithmetic expansion: `$((1 + 2))`
+- Pipelines and redirections: `|`, `>`, `>>`, `<`, `<<<`, `2>&1`
+- Control flow: `if`/`elif`/`else`, `for`, `while`, `case`
+- Functions (POSIX and bash-style)
+- Arrays: `arr=(a b c)`, `${arr[@]}`, `${#arr[@]}`
+- Glob expansion: `*`, `?`
+- Here documents: `<<EOF`
+
+**Security:**
+- Script size limited by `max_input_bytes` (default: 10MB)
+- Parsing timeout enforced (default: 5s)
+- AST depth limited to prevent stack overflow (default: 100)
+- All operations sandboxed to virtual filesystem
+
+### `exec_streaming()`
+
+Execute a bash script with streaming output callbacks.
+
+```rust
+pub async fn exec_streaming(
+    &mut self,
+    script: &str,
+    output_callback: OutputCallback,
+) -> Result<ExecResult>
+```
+
+<ParamField path="script" type="&str" required>
+  Bash script to execute
+</ParamField>
+
+<ParamField path="output_callback" type="OutputCallback" required>
+  Callback function invoked with incremental `(stdout_chunk, stderr_chunk)` pairs
+</ParamField>
+
+<ResponseField name="ExecResult" type="Result<ExecResult>">
+  Full execution result (also available via callback chunks)
+</ResponseField>
+
+**Example:**
+
+```rust
+use bashkit::Bash;
+use std::sync::{Arc, Mutex};
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let chunks: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let chunks_cb = chunks.clone();
+    
+    let mut bash = Bash::new();
+    let result = bash.exec_streaming(
+        "for i in 1 2 3; do echo $i; done",
+        Box::new(move |stdout, _stderr| {
+            chunks_cb.lock().unwrap().push(stdout.to_string());
+        }),
+    ).await?;
+    
+    assert_eq!(result.stdout, "1\n2\n3\n");
+    assert_eq!(*chunks.lock().unwrap(), vec!["1\n", "2\n", "3\n"]);
+    Ok(())
+}
+```
+
+**Callback Timing:**
+Callbacks fire after:
+- Each loop iteration
+- Each command list element
+- Each top-level command
+
+## Filesystem Access
+
+### `fs()`
+
+Get a clone of the underlying virtual filesystem.
+
+```rust
+pub fn fs(&self) -> Arc<dyn FileSystem>
+```
+
+<ResponseField name="filesystem" type="Arc<dyn FileSystem>">
+  Thread-safe reference to the virtual filesystem. See [FileSystem](/api/filesystem).
+</ResponseField>
+
+**Example:**
+
+```rust
+use bashkit::{Bash, FileSystem};
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::new();
+    let fs = bash.fs();
+    
+    // Pre-populate config file
+    fs.mkdir(Path::new("/config"), false).await?;
+    fs.write_file(Path::new("/config/app.txt"), b"debug=true\n").await?;
+    
+    // Bash can read pre-populated files
+    let result = bash.exec("cat /config/app.txt").await?;
+    assert_eq!(result.stdout, "debug=true\n");
+    
+    // Read output directly
+    bash.exec("echo 'done' > /output.txt").await?;
+    let output = fs.read_file(Path::new("/output.txt")).await?;
+    assert_eq!(output, b"done\n");
+    
+    Ok(())
+}
+```
+
+**Use Cases:**
+- Pre-populating files before script execution
+- Reading binary file outputs after execution
+- Injecting test data or configuration
+- Accessing files created by scripts
+
+## State Management
+
+### `shell_state()`
+
+Capture the current shell state for later restoration.
+
+```rust
+pub fn shell_state(&self) -> ShellState
+```
+
+<ResponseField name="state" type="ShellState">
+  Serializable snapshot of interpreter state (variables, env, cwd, options)
+</ResponseField>
+
+### `restore_shell_state()`
+
+Restore shell state from a previous snapshot.
+
+```rust
+pub fn restore_shell_state(&mut self, state: &ShellState)
+```
+
+<ParamField path="state" type="&ShellState" required>
+  Previously captured shell state
+</ParamField>
+
+**Example:**
+
+```rust
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> bashkit::Result<()> {
+    let mut bash = Bash::new();
+    bash.exec("x=42").await?;
+    
+    let state = bash.shell_state();
+    
+    bash.exec("x=99").await?;
+    bash.restore_shell_state(&state);
+    
+    let result = bash.exec("echo $x").await?;
+    assert_eq!(result.stdout, "42\n");
+    Ok(())
+}
+```
+
+**What's Restored:**
+- Shell variables
+- Environment variables
+- Current working directory
+- Arrays
+- Aliases
+- Traps
+- Shell options
+
+**What's NOT Restored:**
+- Functions (remain as-is)
+- Custom builtins (remain as-is)
+- Filesystem contents (use `InMemoryFs::snapshot()` for that)
+
+## Built-in Commands
+
+BashKit includes 68+ built-in commands organized by category:
+
+### Core I/O
+`echo`, `printf`, `cat`, `read`
+
+### Text Processing
+`grep`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `nl`, `paste`, `column`, `comm`, `diff`, `strings`, `tac`, `rev`
+
+### File Operations
+`cd`, `pwd`, `ls`, `find`, `mkdir`, `mktemp`, `rm`, `rmdir`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`
+
+### File Inspection
+`file`, `stat`, `less`, `tar`, `gzip`, `gunzip`, `du`, `df`
+
+### Flow Control
+`test`, `[`, `true`, `false`, `exit`, `return`, `break`, `continue`
+
+### Shell/Variables
+`export`, `set`, `unset`, `local`, `shift`, `source`, `eval`, `declare`, `typeset`, `readonly`, `shopt`, `getopts`
+
+### Utilities
+`sleep`, `date`, `seq`, `expr`, `yes`, `wait`, `timeout`, `xargs`, `tee`, `watch`, `basename`, `dirname`, `realpath`
+
+### Directory Stack
+`pushd`, `popd`, `dirs`
+
+### System Info
+`whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history`
+
+### Network
+`curl`, `wget` (requires [NetworkAllowlist](/api/network-allowlist))
+
+### Binary/Hex
+`od`, `xxd`, `hexdump`, `base64`
+
+### Signals
+`kill`
+
+## See Also
+
+- [BashBuilder](/api/bash-builder) - Configure Bash instances
+- [ExecResult](/api/exec-result) - Execution result structure
+- [ExecutionLimits](/api/execution-limits) - Resource limit configuration
+- [FileSystem](/api/filesystem) - Virtual filesystem trait
+- [InMemoryFs](/api/in-memory-fs) - Default filesystem implementation
